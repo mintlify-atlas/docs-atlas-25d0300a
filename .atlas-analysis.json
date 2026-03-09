@@ -1,0 +1,96 @@
+{
+  "projectType": "saas",
+  "projectName": "MiTienda Web",
+  "projectDescription": "E-Commerce web application built with ASP.NET Core 9 MVC and SQL Server for managing products, orders, and customer accounts.",
+  "theme": "almond",
+  "primaryColor": "#0EA5E9",
+  "lightColor": "#38BDF8",
+  "darkColor": "#0284C7",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/product-catalog",
+              "features/shopping-cart",
+              "features/authentication",
+              "features/order-management"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/entities",
+              "architecture/services",
+              "architecture/repositories"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "admin/managing-products",
+              "admin/managing-categories",
+              "admin/managing-users",
+              "admin/managing-orders"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "development/configuration",
+              "development/database-setup",
+              "development/environment"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "development/deployment",
+              "development/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Product catalog with categories and search",
+    "Shopping cart with session management",
+    "User authentication and role-based access",
+    "Order processing and checkout",
+    "Admin product and category management",
+    "Image upload for products",
+    "Entity Framework Core with SQL Server"
+  ],
+  "publicApiSurface": [
+    "HomeController.Index",
+    "HomeController.FilterByCategoria",
+    "HomeController.ProductoDetalle",
+    "HomeController.AgregarArticuloCarrito",
+    "HomeController.VerCarrito",
+    "HomeController.PagarAhora",
+    "CuentaController.Login",
+    "CuentaController.Registro",
+    "CuentaController.CerrarSesion",
+    "ProductoController",
+    "CategoriaController",
+    "UsuarioController"
+  ]
+}
