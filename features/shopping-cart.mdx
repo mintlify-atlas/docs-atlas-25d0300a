@@ -1,0 +1,248 @@
+---
+title: 'Shopping Cart'
+description: 'Session-based cart management for adding and managing products before checkout'
+icon: 'cart-shopping'
+---
+
+The shopping cart allows customers to collect products before checkout, with all cart data stored in the user's session for persistence across page views.
+
+## Overview
+
+The shopping cart system provides:
+- **Session-based storage** - Cart persists without requiring user login
+- **Quantity management** - Add multiple units of the same product
+- **Real-time updates** - Instant feedback when items are added or removed
+- **Visual cart view** - Dedicated page showing all cart items with totals
+
+## User Workflow
+
+<Steps>
+  <Step title="Add Product to Cart">
+    From any product detail page, select a quantity and click "Add to Cart".
+    
+    A success message confirms the item was added to your cart.
+  </Step>
+  
+  <Step title="View Cart Contents">
+    Navigate to the cart page to see all items, quantities, and prices.
+    
+    The cart displays individual item totals and a grand total.
+  </Step>
+  
+  <Step title="Update Quantities">
+    Adding the same product again increments its quantity rather than creating a duplicate entry.
+  </Step>
+  
+  <Step title="Remove Items">
+    Click the remove button next to any item to delete it from the cart.
+    
+    The cart updates immediately without page reload.
+  </Step>
+  
+  <Step title="Proceed to Checkout">
+    When ready, click "Pay Now" to complete your purchase.
+    
+    See [Order Management](/features/order-management) for checkout details.
+  </Step>
+</Steps>
+
+## Technical Implementation
+
+### Cart Data Model
+
+The cart uses a lightweight view model stored in session:
+
+```csharp ArticuloCarritoVM.cs
+namespace MiTienda_practica.Models
+{
+    public class ArticuloCarritoVM
+    {
+        public int ProductId { get; set; }
+        public string ImagenNombre { get; set; }
+        public string Nombre { get; set; }
+        public decimal Precio { get; set; }
+        public int Quantity { get; set; }
+    }
+}
+```
+
+<Note>
+  The cart stores denormalized product data (name, price, image) rather than just IDs. This improves performance and ensures the cart displays correctly even if product details change.
+</Note>
+
+### Adding Items to Cart
+
+The add-to-cart logic handles both new items and quantity updates:
+
+```csharp HomeController.cs:69
+[HttpPost]
+public async Task<IActionResult> AgregarArticuloCarrito(int productoId, int quantity)
+{
+    var producto = await _productoService.GetByIdAsync(productoId);
+
+    var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito") ?? new List<ArticuloCarritoVM>();
+
+    if (carrito.Find(x => x.ProductId == productoId) == null)
+    {
+        carrito.Add(new ArticuloCarritoVM
+        {
+            ProductId = productoId,
+            ImagenNombre = producto.ImagenNombre,
+            Nombre = producto.Nombre,
+            Precio = producto.Precio,
+            Quantity = quantity
+        });
+    }
+    else 
+    {
+        var ActualizarProducto = carrito.Find(x => x.ProductId == productoId);
+        ActualizarProducto!.Quantity += quantity;
+    }
+
+    HttpContext.Session.Set("Carrito", carrito);
+    ViewBag.message = "Producto agregado al carrito exitosamente.";
+    return View("ProductoDetalle", producto);
+}
+```
+
+<Info>
+  **Smart Quantity Handling**: If a product already exists in the cart, the system increments its quantity instead of creating a duplicate entry. This prevents cart clutter and provides a better user experience.
+</Info>
+
+### Session Management
+
+The cart leverages ASP.NET Core's session infrastructure with custom extension methods:
+
+<Tabs>
+  <Tab title="Reading from Session">
+    ```csharp
+    var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito") ?? new List<ArticuloCarritoVM>();
+    ```
+    
+    The null-coalescing operator ensures an empty list is created if no cart exists in the session.
+  </Tab>
+  
+  <Tab title="Writing to Session">
+    ```csharp
+    HttpContext.Session.Set("Carrito", carrito);
+    ```
+    
+    The custom `Set` extension method serializes the cart list to JSON for session storage.
+  </Tab>
+  
+  <Tab title="Clearing Cart">
+    ```csharp
+    HttpContext.Session.Remove("Carrito");
+    ```
+    
+    After successful checkout, the cart is cleared from the session.
+  </Tab>
+</Tabs>
+
+### Viewing the Cart
+
+The cart view simply retrieves the session data:
+
+```csharp HomeController.cs:98
+public IActionResult VerCarrito()
+{             
+    var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito") ?? new List<ArticuloCarritoVM>();
+    return View(carrito);
+}
+```
+
+### Removing Cart Items
+
+Users can remove individual items from the cart:
+
+```csharp HomeController.cs:104
+public IActionResult QuitarArticuloCarrito(int productoId)
+{
+    var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito");
+
+    var producto = carrito.Find(x => x.ProductId == productoId);
+    carrito.Remove(producto!);
+    HttpContext.Session.Set("Carrito", carrito);
+    return View("VerCarrito",carrito);
+}
+```
+
+<Warning>
+  The remove action assumes the cart exists in session. In a production environment, you should add null-checking to handle edge cases where the session might have expired.
+</Warning>
+
+## Session Extensions
+
+The cart relies on custom session extension methods (typically in `Utilities/SessionExtensions.cs`):
+
+```csharp
+public static class SessionExtensions
+{
+    public static void Set<T>(this ISession session, string key, T value)
+    {
+        session.SetString(key, JsonSerializer.Serialize(value));
+    }
+
+    public static T? Get<T>(this ISession session, string key)
+    {
+        var value = session.GetString(key);
+        return value == null ? default : JsonSerializer.Deserialize<T>(value);
+    }
+}
+```
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="No Login Required" icon="unlock">
+    Cart works with anonymous users via session storage, reducing friction in the shopping experience.
+  </Card>
+  
+  <Card title="Intelligent Updates" icon="rotate">
+    Adding existing products increments quantity rather than duplicating items.
+  </Card>
+  
+  <Card title="Persistent Session" icon="clock">
+    Cart data persists across page navigation until checkout or session expiration.
+  </Card>
+  
+  <Card title="Instant Feedback" icon="bolt">
+    Success messages and immediate view updates confirm user actions.
+  </Card>
+</CardGroup>
+
+## Checkout Integration
+
+When users proceed to checkout, the cart data is consumed to create an order:
+
+```csharp HomeController.cs:116
+[HttpPost]
+public async Task<IActionResult> PagarAhora()
+{ 
+    var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito");
+
+    var userId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+    await _ordenService.AddAsync(carrito,int.Parse(userId));
+
+    HttpContext.Session.Remove("Carrito");
+
+    return View("PagoExitoso");
+}
+```
+
+<Tip>
+  The cart is cleared from session after successful order creation, ensuring users start with a fresh cart for their next purchase.
+</Tip>
+
+## Best Practices
+
+1. **Stock Validation**: Before adding to cart, verify the product has sufficient stock
+2. **Price Consistency**: Store prices in the cart to maintain consistency even if product prices change
+3. **Session Configuration**: Ensure session timeout is configured appropriately for your user base
+4. **Empty Cart Handling**: Provide clear messaging when the cart is empty
+
+## Related Features
+
+- [Product Catalog](/features/product-catalog) - Browse products to add to cart
+- [Order Management](/features/order-management) - Convert cart to completed order
+- [Authentication](/features/authentication) - Required for checkout process

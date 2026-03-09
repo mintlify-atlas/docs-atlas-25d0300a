@@ -1,0 +1,620 @@
+---
+title: 'Deployment Guide'
+description: 'Complete guide for deploying MiTienda Web to production environments'
+icon: 'rocket'
+---
+
+## Overview
+
+MiTienda Web is an ASP.NET Core 9 MVC e-commerce application that can be deployed to various hosting environments. This guide covers deployment options and production configuration requirements.
+
+<Note>
+  Before deploying to production, ensure you have:
+  - .NET 9 SDK or Runtime installed on the target server
+  - SQL Server database configured and accessible
+  - Valid connection strings for production
+  - SSL certificate for HTTPS (recommended)
+</Note>
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Runtime Requirements" icon="server">
+    - .NET 9 Runtime or SDK
+    - SQL Server 2016 or later
+    - Windows Server 2016+ or Linux
+  </Card>
+  <Card title="Application Dependencies" icon="box">
+    - Entity Framework Core 9.0.7
+    - SQL Server provider
+    - IIS or reverse proxy (Nginx/Apache)
+  </Card>
+</CardGroup>
+
+## Deployment Options
+
+### Option 1: IIS Deployment (Windows)
+
+<Steps>
+  <Step title="Install Prerequisites">
+    Install the .NET 9 Hosting Bundle on your Windows Server:
+    
+    ```powershell
+    # Download and install .NET 9 Hosting Bundle
+    # https://dotnet.microsoft.com/download/dotnet/9.0
+    
+    # Restart IIS after installation
+    net stop was /y
+    net start w3svc
+    ```
+    
+    <Info>
+      The Hosting Bundle includes the .NET Runtime, ASP.NET Core Runtime, and IIS support.
+    </Info>
+  </Step>
+
+  <Step title="Publish the Application">
+    Build and publish the application for production:
+    
+    ```bash
+    cd /path/to/MiTienda_practica
+    dotnet publish -c Release -o ./publish
+    ```
+    
+    This creates a self-contained deployment in the `publish` folder.
+  </Step>
+
+  <Step title="Configure Application Settings">
+    Update `appsettings.json` in the publish folder with production values:
+    
+    ```json appsettings.json
+    {
+      "Logging": {
+        "LogLevel": {
+          "Default": "Warning",
+          "Microsoft.AspNetCore": "Warning",
+          "Microsoft.EntityFrameworkCore": "Warning"
+        }
+      },
+      "AllowedHosts": "yourdomain.com",
+      "ConnectionStrings": {
+        "CadenaSql": "Data Source=your-server;Database=DBTiendaWeb;User ID=your-user;Password=your-password;TrustServerCertificate=False;Encrypt=True;"
+      }
+    }
+    ```
+    
+    <Warning>
+      Never commit production connection strings to source control. Use environment variables or Azure Key Vault instead.
+    </Warning>
+  </Step>
+
+  <Step title="Create IIS Application Pool">
+    Configure a dedicated application pool:
+    
+    ```powershell
+    Import-Module WebAdministration
+    
+    # Create new application pool
+    New-WebAppPool -Name "MiTiendaWebPool"
+    Set-ItemProperty IIS:\AppPools\MiTiendaWebPool -Name managedRuntimeVersion -Value ""
+    Set-ItemProperty IIS:\AppPools\MiTiendaWebPool -Name processModel.identityType -Value "ApplicationPoolIdentity"
+    ```
+  </Step>
+
+  <Step title="Create IIS Website">
+    Create and configure the IIS website:
+    
+    ```powershell
+    # Create website
+    New-Website -Name "MiTiendaWeb" `
+      -PhysicalPath "C:\inetpub\MiTiendaWeb" `
+      -ApplicationPool "MiTiendaWebPool" `
+      -Port 80
+    
+    # Copy published files
+    Copy-Item -Path "./publish/*" -Destination "C:\inetpub\MiTiendaWeb" -Recurse
+    ```
+  </Step>
+
+  <Step title="Run Database Migrations">
+    Apply Entity Framework migrations to the production database:
+    
+    ```bash
+    # From the published directory
+    cd C:\inetpub\MiTiendaWeb
+    dotnet MiTienda_practica.dll ef database update
+    ```
+    
+    <Tip>
+      Alternatively, generate SQL scripts and run them manually:
+      ```bash
+      dotnet ef migrations script -o migration.sql
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Configure Permissions">
+    Grant necessary permissions to the application pool identity:
+    
+    ```powershell
+    # Grant read/write to wwwroot/imagenes for file uploads
+    $acl = Get-Acl "C:\inetpub\MiTiendaWeb\wwwroot\imagenes"
+    $permission = "IIS AppPool\MiTiendaWebPool","FullControl","ContainerInherit,ObjectInherit","None","Allow"
+    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
+    $acl.SetAccessRule($accessRule)
+    Set-Acl "C:\inetpub\MiTiendaWeb\wwwroot\imagenes" $acl
+    ```
+  </Step>
+</Steps>
+
+### Option 2: Azure App Service
+
+<Steps>
+  <Step title="Create Azure Resources">
+    Set up required Azure resources:
+    
+    ```bash
+    # Login to Azure
+    az login
+    
+    # Create resource group
+    az group create --name MiTiendaWeb-RG --location eastus
+    
+    # Create App Service plan
+    az appservice plan create --name MiTiendaWeb-Plan \
+      --resource-group MiTiendaWeb-RG \
+      --sku B1 --is-linux
+    
+    # Create web app
+    az webapp create --name MiTiendaWeb \
+      --resource-group MiTiendaWeb-RG \
+      --plan MiTiendaWeb-Plan \
+      --runtime "DOTNET|9.0"
+    ```
+  </Step>
+
+  <Step title="Configure Connection String">
+    Set the database connection string as an application setting:
+    
+    ```bash
+    az webapp config connection-string set \
+      --name MiTiendaWeb \
+      --resource-group MiTiendaWeb-RG \
+      --connection-string-type SQLAzure \
+      --settings CadenaSql='Data Source=your-server.database.windows.net;Database=DBTiendaWeb;User ID=your-user;Password=your-password;'
+    ```
+  </Step>
+
+  <Step title="Deploy Application">
+    Deploy using Azure CLI or Visual Studio:
+    
+    ```bash
+    # Publish and deploy
+    dotnet publish -c Release
+    
+    # Create deployment package
+    cd bin/Release/net9.0/publish
+    zip -r deploy.zip .
+    
+    # Deploy to Azure
+    az webapp deployment source config-zip \
+      --resource-group MiTiendaWeb-RG \
+      --name MiTiendaWeb \
+      --src deploy.zip
+    ```
+  </Step>
+
+  <Step title="Run Migrations">
+    Execute database migrations using Kudu console or Azure CLI:
+    
+    ```bash
+    az webapp ssh --name MiTiendaWeb --resource-group MiTiendaWeb-RG
+    cd site/wwwroot
+    dotnet MiTienda_practica.dll ef database update
+    ```
+  </Step>
+</Steps>
+
+### Option 3: Docker Deployment
+
+<Steps>
+  <Step title="Create Dockerfile">
+    Create a `Dockerfile` in the project root:
+    
+    ```dockerfile Dockerfile
+    FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
+    WORKDIR /app
+    EXPOSE 80
+    EXPOSE 443
+    
+    FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+    WORKDIR /src
+    COPY ["MiTienda_practica/MiTienda_practica.csproj", "MiTienda_practica/"]
+    RUN dotnet restore "MiTienda_practica/MiTienda_practica.csproj"
+    COPY . .
+    WORKDIR "/src/MiTienda_practica"
+    RUN dotnet build "MiTienda_practica.csproj" -c Release -o /app/build
+    
+    FROM build AS publish
+    RUN dotnet publish "MiTienda_practica.csproj" -c Release -o /app/publish
+    
+    FROM base AS final
+    WORKDIR /app
+    COPY --from=publish /app/publish .
+    ENTRYPOINT ["dotnet", "MiTienda_practica.dll"]
+    ```
+  </Step>
+
+  <Step title="Create Docker Compose File">
+    Create `docker-compose.yml` for multi-container setup:
+    
+    ```yaml docker-compose.yml
+    version: '3.8'
+    
+    services:
+      web:
+        build:
+          context: .
+          dockerfile: Dockerfile
+        ports:
+          - "8080:80"
+          - "8443:443"
+        environment:
+          - ASPNETCORE_ENVIRONMENT=Production
+          - ConnectionStrings__CadenaSql=Data Source=sqlserver;Database=DBTiendaWeb;User ID=sa;Password=YourStrong@Password;
+        depends_on:
+          - sqlserver
+        networks:
+          - mitienda-network
+      
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        environment:
+          - ACCEPT_EULA=Y
+          - SA_PASSWORD=YourStrong@Password
+          - MSSQL_PID=Express
+        ports:
+          - "1433:1433"
+        volumes:
+          - sqldata:/var/opt/mssql
+        networks:
+          - mitienda-network
+    
+    volumes:
+      sqldata:
+    
+    networks:
+      mitienda-network:
+        driver: bridge
+    ```
+  </Step>
+
+  <Step title="Build and Run">
+    Build and start the containers:
+    
+    ```bash
+    # Build the image
+    docker-compose build
+    
+    # Start the containers
+    docker-compose up -d
+    
+    # View logs
+    docker-compose logs -f web
+    ```
+  </Step>
+
+  <Step title="Run Migrations in Container">
+    Execute migrations inside the container:
+    
+    ```bash
+    # Access the container
+    docker-compose exec web bash
+    
+    # Run migrations
+    dotnet MiTienda_practica.dll ef database update
+    
+    # Exit container
+    exit
+    ```
+  </Step>
+</Steps>
+
+### Option 4: Linux with Nginx
+
+<Steps>
+  <Step title="Install .NET Runtime">
+    Install .NET 9 on your Linux server:
+    
+    ```bash
+    # Ubuntu 22.04
+    wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb
+    sudo dpkg -i packages-microsoft-prod.deb
+    sudo apt-get update
+    sudo apt-get install -y aspnetcore-runtime-9.0
+    ```
+  </Step>
+
+  <Step title="Deploy Application Files">
+    Copy published files to the server:
+    
+    ```bash
+    # Publish locally
+    dotnet publish -c Release -o ./publish
+    
+    # Copy to server
+    scp -r ./publish/* user@server:/var/www/mitiendaweb/
+    ```
+  </Step>
+
+  <Step title="Create Systemd Service">
+    Create a service file for automatic startup:
+    
+    ```ini /etc/systemd/system/mitiendaweb.service
+    [Unit]
+    Description=MiTienda Web E-Commerce Application
+    After=network.target
+    
+    [Service]
+    Type=notify
+    WorkingDirectory=/var/www/mitiendaweb
+    ExecStart=/usr/bin/dotnet /var/www/mitiendaweb/MiTienda_practica.dll
+    Restart=always
+    RestartSec=10
+    KillSignal=SIGINT
+    SyslogIdentifier=mitiendaweb
+    User=www-data
+    Environment=ASPNETCORE_ENVIRONMENT=Production
+    Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+    
+    [Install]
+    WantedBy=multi-user.target
+    ```
+    
+    Enable and start the service:
+    
+    ```bash
+    sudo systemctl enable mitiendaweb
+    sudo systemctl start mitiendaweb
+    sudo systemctl status mitiendaweb
+    ```
+  </Step>
+
+  <Step title="Configure Nginx Reverse Proxy">
+    Set up Nginx as a reverse proxy:
+    
+    ```nginx /etc/nginx/sites-available/mitiendaweb
+    server {
+        listen 80;
+        server_name yourdomain.com;
+        
+        location / {
+            proxy_pass http://localhost:5000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection keep-alive;
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # Static files caching
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            proxy_pass http://localhost:5000;
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    ```
+    
+    Enable the site:
+    
+    ```bash
+    sudo ln -s /etc/nginx/sites-available/mitiendaweb /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl reload nginx
+    ```
+  </Step>
+</Steps>
+
+## Production Configuration
+
+### Environment-Specific Settings
+
+Use environment variables to override configuration:
+
+```bash
+# Linux/macOS
+export ASPNETCORE_ENVIRONMENT=Production
+export ConnectionStrings__CadenaSql="Data Source=prod-server;Database=DBTiendaWeb;..."
+
+# Windows PowerShell
+$env:ASPNETCORE_ENVIRONMENT="Production"
+$env:ConnectionStrings__CadenaSql="Data Source=prod-server;Database=DBTiendaWeb;..."
+```
+
+### Security Configuration
+
+<Accordion title="HTTPS Configuration">
+  Configure HTTPS redirection in `Program.cs` (already handled by ASP.NET Core 9):
+  
+  ```csharp Program.cs
+  var app = builder.Build();
+  
+  if (!app.Environment.IsDevelopment())
+  {
+      app.UseExceptionHandler("/Home/Error");
+      app.UseHsts(); // Add HSTS for production
+  }
+  
+  app.UseHttpsRedirection(); // Add this line
+  ```
+</Accordion>
+
+<Accordion title="Session and Cookie Security">
+  The application already configures secure session settings in `Program.cs:27-32`:
+  
+  ```csharp
+  builder.Services.AddSession(options =>
+  {
+      options.IdleTimeout = TimeSpan.FromMinutes(30);
+      options.Cookie.HttpOnly = true;
+      options.Cookie.IsEssential = true;
+      options.Cookie.SecurePolicy = CookieSecurePolicy.Always; // Add for production
+  });
+  ```
+</Accordion>
+
+<Accordion title="Database Connection Security">
+  Use encrypted connections to SQL Server:
+  
+  ```json
+  {
+    "ConnectionStrings": {
+      "CadenaSql": "Data Source=server;Database=DBTiendaWeb;User ID=user;Password=pass;Encrypt=True;TrustServerCertificate=False;"
+    }
+  }
+  ```
+  
+  <Warning>
+    Set `TrustServerCertificate=False` in production to enforce certificate validation.
+  </Warning>
+</Accordion>
+
+### Performance Optimization
+
+<CardGroup cols={2}>
+  <Card title="Enable Response Compression" icon="compress">
+    ```csharp Program.cs
+    builder.Services.AddResponseCompression(options =>
+    {
+        options.EnableForHttps = true;
+    });
+    ```
+  </Card>
+  
+  <Card title="Configure Response Caching" icon="clock">
+    ```csharp Program.cs
+    builder.Services.AddResponseCaching();
+    // In middleware pipeline
+    app.UseResponseCaching();
+    ```
+  </Card>
+</CardGroup>
+
+### Database Considerations
+
+<Steps>
+  <Step title="Connection Pooling">
+    SQL Server connection pooling is enabled by default. Configure in connection string:
+    
+    ```
+    Data Source=server;...;Max Pool Size=100;Min Pool Size=5;
+    ```
+  </Step>
+
+  <Step title="Apply Migrations">
+    Always apply migrations before starting the application:
+    
+    ```bash
+    dotnet ef database update --connection "YourConnectionString"
+    ```
+  </Step>
+
+  <Step title="Database Backup">
+    Implement regular backup strategy for production database:
+    
+    ```sql
+    -- Full backup
+    BACKUP DATABASE DBTiendaWeb 
+    TO DISK = 'C:\Backups\DBTiendaWeb_Full.bak'
+    WITH FORMAT, INIT, COMPRESSION;
+    
+    -- Transaction log backup
+    BACKUP LOG DBTiendaWeb 
+    TO DISK = 'C:\Backups\DBTiendaWeb_Log.trn';
+    ```
+  </Step>
+</Steps>
+
+## Health Monitoring
+
+### Application Logging
+
+Configure structured logging in production:
+
+```json appsettings.Production.json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Warning",
+      "Microsoft.AspNetCore": "Warning",
+      "Microsoft.EntityFrameworkCore.Database.Command": "Warning"
+    },
+    "Console": {
+      "IncludeScopes": true,
+      "TimestampFormat": "yyyy-MM-dd HH:mm:ss "
+    }
+  }
+}
+```
+
+### Health Check Endpoint
+
+Add health checks to monitor application status:
+
+```csharp Program.cs
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>();
+
+// In middleware pipeline
+app.MapHealthChecks("/health");
+```
+
+## Post-Deployment Verification
+
+<Steps>
+  <Step title="Verify Application Startup">
+    Check that the application starts without errors:
+    
+    ```bash
+    # Check IIS application pool status
+    # Or check systemd service status
+    sudo systemctl status mitiendaweb
+    ```
+  </Step>
+
+  <Step title="Test Database Connectivity">
+    Navigate to the home page and verify products load from database.
+  </Step>
+
+  <Step title="Test Authentication">
+    Test user login functionality (`/Cuenta/Login`) to verify session management.
+  </Step>
+
+  <Step title="Test File Uploads">
+    Verify product image uploads work correctly (`wwwroot/imagenes` permissions).
+  </Step>
+
+  <Step title="Monitor Application Logs">
+    Check logs for any startup warnings or errors:
+    
+    ```bash
+    # Windows Event Viewer
+    # Or Linux system logs
+    sudo journalctl -u mitiendaweb -f
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/development/troubleshooting">
+    Common deployment issues and solutions
+  </Card>
+  <Card title="Configuration" icon="gear" href="/development/configuration">
+    Advanced configuration options
+  </Card>
+</CardGroup>

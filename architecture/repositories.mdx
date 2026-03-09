@@ -1,0 +1,588 @@
+---
+title: 'Repository Pattern'
+description: 'Data access layer implementation with GenericRepository and specialized repositories'
+---
+
+## Overview
+
+MiTienda Web implements the **Repository Pattern** to abstract data access logic. The repository layer provides a clean API for CRUD operations and complex queries, hiding Entity Framework implementation details from the service layer.
+
+## Repository Architecture
+
+```
+Services
+    ↓
+┌─────────────────────────────────┐
+│    Repository Layer             │
+│                                 │
+│  ┌───────────────────────────┐ │
+│  │  GenericRepository<T>     │ │  ← Base CRUD
+│  └───────────┬───────────────┘ │
+│              │                  │
+│              │ inherits         │
+│              ↓                  │
+│  ┌───────────────────────────┐ │
+│  │  OrdenRepository          │ │  ← Specialized
+│  └───────────────────────────┘ │
+└─────────────┬───────────────────┘
+              ↓
+         EF Core DbContext
+              ↓
+          SQL Server
+```
+
+## Generic Repository
+
+The `GenericRepository<TEntity>` provides standard CRUD operations for any entity type.
+
+```csharp
+public class GenericRepository<TEntity>(AppDbContext _dbContext) 
+    where TEntity : class
+{
+    // Basic read all
+    public async Task<IEnumerable<TEntity>> GetAllAsync()
+    {
+       return await _dbContext.Set<TEntity>().ToListAsync();
+    }
+
+    // Advanced read with filtering and includes
+    public async Task<IEnumerable<TEntity>> GetAllAsync(
+        Expression<Func<TEntity, bool>>[] conditions = null,
+        Expression<Func<TEntity, object>>[] includes = null
+    )
+    {
+       IQueryable<TEntity> query = _dbContext.Set<TEntity>();
+
+        if (conditions is not null)
+            foreach (var condition in conditions) 
+                query = query.Where(condition);
+
+        if (includes is not null)
+            foreach (var include in includes) 
+                query = query.Include(include);
+
+        return await query.ToListAsync();
+    }
+
+    // Create
+    public virtual async Task AddAsync(TEntity entity)
+    {
+        await _dbContext.Set<TEntity>().AddAsync(entity);
+        await _dbContext.SaveChangesAsync();
+    }
+
+    // Read by ID
+    public async Task<TEntity?> GetByIdAsync(int entityId)
+    {
+        return await _dbContext.Set<TEntity>().FindAsync(entityId);
+    }
+    
+    // Update
+    public async Task EditAsync(TEntity entity)
+    {
+        _dbContext.Set<TEntity>().Update(entity);
+        await _dbContext.SaveChangesAsync();
+    }
+
+    // Delete
+    public async Task DeleteAsync(TEntity entity)
+    {
+        _dbContext.Set<TEntity>().Remove(entity);
+        await _dbContext.SaveChangesAsync();
+    }
+
+    // Get single by filter
+    public async Task<TEntity?> GetByFilter(
+        Expression<Func<TEntity, bool>>[] conditions
+    )
+    {
+        IQueryable<TEntity> query = _dbContext.Set<TEntity>();
+
+        if (conditions is not null)
+            foreach (var condition in conditions) 
+                query = query.Where(condition);
+
+        return await query.FirstOrDefaultAsync();
+    }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Repositories/GenericRepository.cs:8`
+</Info>
+
+## Key Methods
+
+<Tabs>
+  <Tab title="GetAllAsync()">
+    ### Simple Get All
+    
+    Returns all entities of type `TEntity`:
+    
+    ```csharp
+    var categorias = await _categoriaRepository.GetAllAsync();
+    ```
+    
+    **SQL Generated**:
+    ```sql
+    SELECT * FROM Categorias
+    ```
+  </Tab>
+  
+  <Tab title="GetAllAsync(conditions, includes)">
+    ### Advanced Get All
+    
+    Supports filtering and eager loading:
+    
+    ```csharp
+    // Get products with stock > 0 in specific category, including Category data
+    var productos = await _productoRepository.GetAllAsync(
+        conditions: new Expression<Func<Producto, bool>>[]
+        {
+            x => x.Stock > 0,
+            x => x.CategoriaId == 1
+        },
+        includes: new Expression<Func<Producto, object>>[]
+        {
+            x => x.Categoria!
+        }
+    );
+    ```
+    
+    **SQL Generated**:
+    ```sql
+    SELECT p.*, c.*
+    FROM Productos p
+    INNER JOIN Categorias c ON p.CategoriaId = c.CategoriaId
+    WHERE p.Stock > 0 AND p.CategoriaId = 1
+    ```
+    
+    <Note>
+    - **conditions**: Array of lambda expressions for WHERE clauses
+    - **includes**: Array of navigation properties for eager loading
+    - All conditions are combined with AND logic
+    </Note>
+  </Tab>
+  
+  <Tab title="GetByIdAsync()">
+    ### Get By Primary Key
+    
+    Retrieves a single entity by its primary key:
+    
+    ```csharp
+    var producto = await _productoRepository.GetByIdAsync(5);
+    ```
+    
+    **SQL Generated**:
+    ```sql
+    SELECT * FROM Productos WHERE ProductoId = 5
+    ```
+    
+    <Tip>
+    Uses EF Core's `FindAsync()` which checks the in-memory cache first before querying the database.
+    </Tip>
+  </Tab>
+  
+  <Tab title="GetByFilter()">
+    ### Get Single By Conditions
+    
+    Returns the first entity matching all conditions:
+    
+    ```csharp
+    // Find user by email and password
+    var usuario = await _usuarioRepository.GetByFilter(
+        conditions: new Expression<Func<Usuario, bool>>[]
+        {
+            x => x.Correo == "user@example.com",
+            x => x.Contrasena == "password123"
+        }
+    );
+    ```
+    
+    **SQL Generated**:
+    ```sql
+    SELECT TOP 1 * FROM Usuarios 
+    WHERE Correo = 'user@example.com' 
+      AND Contrasena = 'password123'
+    ```
+    
+    <Info>
+    Returns `null` if no entity matches the conditions.
+    </Info>
+  </Tab>
+  
+  <Tab title="CRUD Operations">
+    ### Create, Update, Delete
+    
+    ```csharp
+    // Create
+    var newCategoria = new Categoria { Nombre = "Deportes" };
+    await _categoriaRepository.AddAsync(newCategoria);
+    
+    // Update
+    var categoria = await _categoriaRepository.GetByIdAsync(1);
+    categoria.Nombre = "Updated Name";
+    await _categoriaRepository.EditAsync(categoria);
+    
+    // Delete
+    var categoria = await _categoriaRepository.GetByIdAsync(1);
+    await _categoriaRepository.DeleteAsync(categoria);
+    ```
+    
+    <Warning>
+    All CRUD operations call `SaveChangesAsync()` immediately. Changes are persisted to the database after each operation.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## OrdenRepository (Specialized)
+
+The `OrdenRepository` extends `GenericRepository<Orden>` with custom behavior for order management.
+
+```csharp
+public class OrdenRepository : GenericRepository<Orden>
+{
+    private readonly AppDbContext _dbContext;
+    
+    public OrdenRepository(AppDbContext dbContext) : base(dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
+    public async Task AddAsync(Orden orden)
+    {
+        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+
+        try
+        {
+            // 1. Reduce stock for each product in the order
+            foreach (var detalle in orden.ArticuloPedidos)
+            {
+                var producto = await _dbContext.Productos.FindAsync(detalle.ProductoId);
+                producto!.Stock -= detalle.Cantidad;
+            }
+
+            // 2. Add the order
+            await _dbContext.Ordens.AddAsync(orden);
+            await _dbContext.SaveChangesAsync();
+
+            // 3. Commit transaction
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            // 4. Rollback on any error
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<IEnumerable<Orden>> GetAllWithDetailsAsync(int usuarioId)
+    {
+        var ordenes = await _dbContext.Ordens
+            .Where(x => x.UsuarioId == usuarioId)
+            .Include(x => x.ArticuloPedidos)
+                .ThenInclude(x => x.Producto)
+            .ToListAsync();
+            
+        return ordenes;
+    }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Repositories/OrdenRepository.cs:7`
+</Info>
+
+### Why Override AddAsync?
+
+<Steps>
+  <Step title="Transaction Management">
+    Order creation requires multiple operations:
+    - Update product stock quantities
+    - Create order record
+    - Create order item records
+    
+    All must succeed or all must fail (atomicity).
+  </Step>
+  
+  <Step title="Stock Reduction">
+    For each product in the order:
+    ```csharp
+    var producto = await _dbContext.Productos.FindAsync(detalle.ProductoId);
+    producto!.Stock -= detalle.Cantidad;
+    ```
+    
+    Reduces available inventory when order is placed.
+  </Step>
+  
+  <Step title="Error Handling">
+    If any operation fails:
+    - Transaction is rolled back
+    - No changes are saved to database
+    - Original exception is re-thrown
+  </Step>
+</Steps>
+
+<Warning>
+**Concurrency Issue**: This implementation doesn't handle concurrent orders for the same product. In production, consider:
+- Optimistic concurrency with row versioning
+- Pessimistic locking
+- Saga pattern for distributed transactions
+</Warning>
+
+### GetAllWithDetailsAsync
+
+Retrieves orders with nested related data:
+
+```csharp
+var ordenes = await _dbContext.Ordens
+    .Where(x => x.UsuarioId == usuarioId)
+    .Include(x => x.ArticuloPedidos)
+        .ThenInclude(x => x.Producto)
+    .ToListAsync();
+```
+
+**Generates SQL**:
+```sql
+SELECT o.*, ap.*, p.*
+FROM Ordens o
+INNER JOIN ArticuloPedidos ap ON o.OrdenId = ap.OrdenId
+INNER JOIN Productos p ON ap.ProductoId = p.ProductoId
+WHERE o.UsuarioId = @usuarioId
+```
+
+<Note>
+- Uses `Include()` for one-to-many relationship (Orden → ArticuloPedidos)
+- Uses `ThenInclude()` for the next level (ArticuloPedido → Producto)
+- All data loaded in a single database query
+</Note>
+
+## Repository Registration
+
+Repositories are registered with **scoped lifetime** in `Program.cs`:
+
+```csharp
+// Generic repository (open generic registration)
+builder.Services.AddScoped(typeof(GenericRepository<>));
+
+// Specialized repository
+builder.Services.AddScoped<OrdenRepository>();
+```
+
+<Info>
+**Open Generic Registration**: `typeof(GenericRepository<>)` registers the generic type definition, allowing DI to create instances for any entity type:
+- `GenericRepository<Producto>`
+- `GenericRepository<Categoria>`
+- `GenericRepository<Usuario>`
+</Info>
+
+## Usage Patterns
+
+### In Services
+
+<Tabs>
+  <Tab title="Constructor Injection">
+    ```csharp
+    public class ProductoService(
+        GenericRepository<Categoria> _categoriaRepository,
+        GenericRepository<Producto> _productoRepository,
+        IWebHostEnvironment webHostEnvironment
+    )
+    {
+        // Repositories injected via primary constructor
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Simple Queries">
+    ```csharp
+    // Get all
+    var categories = await _categoriaRepository.GetAllAsync();
+    
+    // Get by ID
+    var product = await _productoRepository.GetByIdAsync(5);
+    
+    // Create
+    await _productoRepository.AddAsync(newProduct);
+    ```
+  </Tab>
+  
+  <Tab title="Complex Queries">
+    ```csharp
+    // Multiple conditions
+    var productos = await _productoRepository.GetAllAsync(
+        conditions: new[]
+        {
+            x => x.Stock > 0,
+            x => x.CategoriaId == categoriaId,
+            x => x.Nombre.Contains(searchTerm)
+        }
+    );
+    
+    // With eager loading
+    var productos = await _productoRepository.GetAllAsync(
+        includes: new Expression<Func<Producto, object>>[]
+        {
+            x => x.Categoria!
+        }
+    );
+    ```
+  </Tab>
+  
+  <Tab title="Custom Operations">
+    ```csharp
+    // Using specialized repository
+    public class OrdenService(OrdenRepository _ordenRepository)
+    {
+        public async Task CreateOrder(List<ArticuloCarritoVM> carrito, int userId)
+        {
+            var orden = new Orden { /* ... */ };
+            
+            // Uses overridden AddAsync with transaction logic
+            await _ordenRepository.AddAsync(orden);
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Benefits of Repository Pattern
+
+<CardGroup cols={2}>
+  <Card title="Abstraction" icon="eye-slash">
+    Hides EF Core implementation details from services
+  </Card>
+  <Card title="Testability" icon="flask">
+    Easy to mock repositories for unit testing
+  </Card>
+  <Card title="Centralization" icon="layer-group">
+    Data access logic in one place
+  </Card>
+  <Card title="Flexibility" icon="arrows-turn-to-dots">
+    Can switch ORMs without changing services
+  </Card>
+</CardGroup>
+
+## Design Decisions
+
+### Generic vs Specialized
+
+<Tabs>
+  <Tab title="When to Use Generic">
+    Use `GenericRepository<T>` when:
+    - Standard CRUD operations are sufficient
+    - No complex business logic in data access
+    - Simple filtering and includes are enough
+    
+    **Examples**: Categoria, Producto (mostly), Usuario
+  </Tab>
+  
+  <Tab title="When to Specialize">
+    Create a specialized repository when:
+    - Need transaction management
+    - Require complex joins or queries
+    - Must coordinate multiple operations
+    - Have entity-specific business logic
+    
+    **Example**: OrdenRepository with stock management
+  </Tab>
+</Tabs>
+
+### Virtual Methods
+
+The `AddAsync` method is marked `virtual` to allow overriding:
+
+```csharp
+public virtual async Task AddAsync(TEntity entity)
+{
+    await _dbContext.Set<TEntity>().AddAsync(entity);
+    await _dbContext.SaveChangesAsync();
+}
+```
+
+<Note>
+This enables `OrdenRepository` to override the base implementation while maintaining the same method signature.
+</Note>
+
+## Query Building with Expressions
+
+The repository uses `Expression<Func<T, bool>>` for type-safe query building:
+
+```csharp
+// Services build conditions dynamically
+var conditions = new List<Expression<Func<Producto, bool>>>
+{
+    x => x.Stock > 0
+};
+
+if (categoriaId != 0) 
+    conditions.Add(x => x.CategoriaId == categoriaId);
+    
+if (!string.IsNullOrEmpty(busqueda))
+    conditions.Add(x => x.Nombre.Contains(busqueda));
+
+// Repository applies them
+var productos = await _productoRepository.GetAllAsync(
+    conditions: conditions.ToArray()
+);
+```
+
+<Tip>
+Expressions are compiled to SQL by Entity Framework, providing:
+- Type safety at compile time
+- IntelliSense support
+- Efficient query translation
+</Tip>
+
+## Common Patterns
+
+### Eager Loading
+
+```csharp
+// Load related entities
+var productos = await _productoRepository.GetAllAsync(
+    includes: new[] { x => x.Categoria! }
+);
+
+// Avoid N+1 query problem
+foreach (var producto in productos)
+{
+    // Categoria is already loaded
+    Console.WriteLine(producto.Categoria.Nombre);
+}
+```
+
+### Filtering
+
+```csharp
+// Find specific user
+var usuario = await _usuarioRepository.GetByFilter(
+    conditions: new[]
+    {
+        x => x.Correo == email,
+        x => x.Contrasena == password
+    }
+);
+```
+
+### Combining Conditions and Includes
+
+```csharp
+// Filter and eager load together
+var productos = await _productoRepository.GetAllAsync(
+    conditions: new[] { x => x.Stock > 0 },
+    includes: new[] { x => x.Categoria! }
+);
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Service Layer" icon="gears" href="/architecture/services">
+    See how services consume repositories
+  </Card>
+  <Card title="Database Entities" icon="shapes" href="/architecture/entities">
+    Understand the entities repositories work with
+  </Card>
+</CardGroup>

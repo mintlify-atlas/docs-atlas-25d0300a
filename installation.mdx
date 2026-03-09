@@ -1,0 +1,496 @@
+---
+title: 'Installation'
+description: 'Complete installation guide for MiTienda Web'
+icon: 'download'
+---
+
+This guide provides comprehensive instructions for installing and configuring MiTienda Web, an ASP.NET Core 9 MVC e-commerce platform.
+
+## System Requirements
+
+### Required Software
+
+<CardGroup cols={2}>
+  <Card title=".NET 9 SDK" icon="microsoft">
+    Version 9.0 or higher required for compilation and runtime
+  </Card>
+  <Card title="SQL Server" icon="database">
+    Express (free), Developer, or full version
+  </Card>
+</CardGroup>
+
+### Development Tools (Recommended)
+
+- **Visual Studio 2022** (17.8 or later) with ASP.NET workload
+- **Visual Studio Code** with C# extension
+- **JetBrains Rider** 2023.3 or later
+- **SQL Server Management Studio (SSMS)** for database management
+
+### Operating System Support
+
+- Windows 10/11 or Windows Server 2016+
+- macOS 12.0+ (with SQL Server via Docker)
+- Linux (Ubuntu 22.04+, with SQL Server via Docker)
+
+## Installation Steps
+
+<Steps>
+  <Step title="Install .NET 9 SDK">
+    Download and install the .NET 9 SDK from the official Microsoft website:
+
+    **Windows:**
+    ```bash
+    # Download from https://dotnet.microsoft.com/download/dotnet/9.0
+    # Run the installer
+    ```
+
+    **macOS (via Homebrew):**
+    ```bash
+    brew install dotnet@9
+    ```
+
+    **Linux (Ubuntu):**
+    ```bash
+    wget https://dot.net/v1/dotnet-install.sh
+    chmod +x dotnet-install.sh
+    ./dotnet-install.sh --channel 9.0
+    ```
+
+    Verify the installation:
+    ```bash
+    dotnet --version
+    # Should output: 9.0.x
+    ```
+  </Step>
+
+  <Step title="Install SQL Server">
+    Choose the SQL Server edition that fits your needs:
+
+    **Windows - SQL Server Express (Free):**
+    - Download from [Microsoft SQL Server Downloads](https://www.microsoft.com/sql-server/sql-server-downloads)
+    - Run the installer and select "Basic" installation
+    - Note the server name (usually `localhost` or `YOUR_PC_NAME\\SQLEXPRESS`)
+
+    **Windows - SQL Server LocalDB (Lightweight):**
+    ```bash
+    # Included with Visual Studio 2022
+    # Or install via SQL Server Express
+    sqllocaldb create MSSQLLocalDB
+    sqllocaldb start MSSQLLocalDB
+    ```
+
+    **macOS/Linux - SQL Server via Docker:**
+    ```bash
+    docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=YourStrong@Password" \
+      -p 1433:1433 --name sqlserver \
+      -d mcr.microsoft.com/mssql/server:2022-latest
+    ```
+
+    <Warning>
+      SQL Server on Docker requires at least 2GB of RAM. Ensure Docker has sufficient memory allocated.
+    </Warning>
+  </Step>
+
+  <Step title="Install Entity Framework Tools">
+    Install the EF Core command-line tools globally:
+
+    ```bash
+    dotnet tool install --global dotnet-ef
+    ```
+
+    Verify installation:
+    ```bash
+    dotnet ef --version
+    # Should output: Entity Framework Core .NET Command-line Tools 9.0.x
+    ```
+
+    <Tip>
+      If you already have EF tools installed, update them:
+      ```bash
+      dotnet tool update --global dotnet-ef
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Clone the Repository">
+    Clone the MiTienda Web repository:
+
+    ```bash
+    git clone <repository-url>
+    cd MiTiendaWeb_practica
+    ```
+
+    Verify the project structure:
+    ```bash
+    ls -la
+    # You should see:
+    # - MiTienda_practica/ (main project)
+    # - MiTiendaWeb_practica.sln (solution file)
+    ```
+  </Step>
+
+  <Step title="Restore NuGet Packages">
+    Navigate to the solution directory and restore dependencies:
+
+    ```bash
+    dotnet restore
+    ```
+
+    This will download the required NuGet packages:
+    - **Microsoft.EntityFrameworkCore.SqlServer** (9.0.7) - SQL Server provider
+    - **Microsoft.EntityFrameworkCore.Tools** (9.0.7) - Migration tools
+    - **Microsoft.VisualStudio.Web.CodeGeneration.Design** (9.0.11) - Scaffolding
+
+    See package references in `/home/daytona/workspace/source/MiTienda_practica/MiTienda_practica.csproj:9-16`
+  </Step>
+
+  <Step title="Configure Database Connection">
+    Open `MiTienda_practica/appsettings.json` and configure your database connection:
+
+    <CodeGroup>
+    ```json SQL Server Express
+    {
+      "ConnectionStrings": {
+        "CadenaSql": "Data Source=localhost\\SQLEXPRESS;Database=DBTiendaWeb;Integrated Security=True;TrustServerCertificate=True;"
+      }
+    }
+    ```
+
+    ```json SQL Server LocalDB
+    {
+      "ConnectionStrings": {
+        "CadenaSql": "Data Source=(localdb)\\mssqllocaldb;Database=DBTiendaWeb;Integrated Security=True;TrustServerCertificate=True;"
+      }
+    }
+    ```
+
+    ```json SQL Server (Docker/Remote)
+    {
+      "ConnectionStrings": {
+        "CadenaSql": "Data Source=localhost,1433;Database=DBTiendaWeb;User ID=sa;Password=YourStrong@Password;TrustServerCertificate=True;"
+      }
+    }
+    ```
+
+    ```json SQL Server (Windows Auth)
+    {
+      "ConnectionStrings": {
+        "CadenaSql": "Data Source=YOUR_SERVER;Database=DBTiendaWeb;Integrated Security=True;TrustServerCertificate=True;"
+      }
+    }
+    ```
+    </CodeGroup>
+
+    <Info>
+      The connection string is read by the application in `Program.cs:15` using `builder.Configuration.GetConnectionString("CadenaSql")`
+    </Info>
+
+    ### Connection String Parameters
+
+    | Parameter | Description | Example |
+    |-----------|-------------|----------|
+    | `Data Source` | SQL Server instance name | `localhost` or `localhost\\SQLEXPRESS` |
+    | `Database` | Database name | `DBTiendaWeb` |
+    | `User ID` | SQL Server username | `sa` |
+    | `Password` | SQL Server password | `YourPassword` |
+    | `Integrated Security` | Use Windows authentication | `True` or `False` |
+    | `TrustServerCertificate` | Accept self-signed certificates | `True` |
+  </Step>
+
+  <Step title="Create and Seed Database">
+    Navigate to the project directory and apply migrations:
+
+    ```bash
+    cd MiTienda_practica
+    dotnet ef database update
+    ```
+
+    This command will:
+    1. Create the `DBTiendaWeb` database if it doesn't exist
+    2. Apply the initial migration `20251130185950_firstMigration`
+    3. Create all tables with proper relationships
+    4. Seed initial data (3 categories: Ropa, Electrónica, Hogar)
+
+    ### Database Schema Created
+
+    The migration creates the following tables:
+
+    **Categorias** - Product categories
+    - `CategoriaId` (int, PK, Identity)
+    - `Nombre` (nvarchar)
+
+    **Productos** - Products catalog
+    - `ProductoId` (int, PK, Identity)
+    - `CategoriaId` (int, FK)
+    - `Nombre` (nvarchar)
+    - `Descripcion` (nvarchar)
+    - `Precio` (decimal(10,2))
+    - `Stock` (int)
+    - `ImagenNombre` (nvarchar, nullable)
+
+    **Usuarios** - User accounts
+    - `UsuarioId` (int, PK, Identity)
+    - `NombreCompleto` (nvarchar)
+    - `Correo` (nvarchar)
+    - `Contrasena` (nvarchar)
+    - `Rol` (nvarchar)
+
+    **Ordens** - Customer orders
+    - `OrdenId` (int, PK, Identity)
+    - `FechaOrden` (datetime2)
+    - `UsuarioId` (int, FK)
+    - `TotalMonto` (decimal(10,2))
+
+    **ArticuloPedidos** - Order line items
+    - `ArticuloPedidoId` (int, PK, Identity)
+    - `OrdenId` (int, FK)
+    - `ProductoId` (int, FK)
+    - `Cantidad` (int)
+    - `Precio` (decimal(10,2))
+
+    See the complete migration in `/home/daytona/workspace/source/MiTienda_practica/Migrations/20251130185950_firstMigration.cs`
+
+    <Tip>
+      You can verify the database creation in SSMS by connecting to your server and expanding the Databases node.
+    </Tip>
+  </Step>
+
+  <Step title="Build the Application">
+    Build the solution to ensure everything compiles correctly:
+
+    ```bash
+    dotnet build
+    ```
+
+    Expected output:
+    ```bash
+    Build succeeded.
+        0 Warning(s)
+        0 Error(s)
+    ```
+
+    This compiles the project targeting .NET 9.0 as specified in `MiTienda_practica.csproj:4`
+  </Step>
+
+  <Step title="Run the Application">
+    Start the application:
+
+    <CodeGroup>
+    ```bash CLI
+    dotnet run
+    ```
+
+    ```bash Custom Ports
+    dotnet run --urls "https://localhost:7000;http://localhost:7001"
+    ```
+
+    ```bash Watch Mode (Auto-reload)
+    dotnet watch run
+    ```
+    </CodeGroup>
+
+    The application will start and display:
+    ```bash
+    info: Microsoft.Hosting.Lifetime[14]
+          Now listening on: https://localhost:5001
+    info: Microsoft.Hosting.Lifetime[14]
+          Now listening on: http://localhost:5000
+    info: Microsoft.Hosting.Lifetime[0]
+          Application started. Press Ctrl+C to shut down.
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    Open your browser and navigate to `https://localhost:5001`
+
+    You should see the MiTienda Web home page. Verify:
+    - The page loads without errors
+    - Navigation menu is visible
+    - Category links work
+
+    <Warning>
+      If you see a certificate warning, click "Advanced" and proceed. This is expected for local development with self-signed certificates.
+    </Warning>
+  </Step>
+</Steps>
+
+## Post-Installation Configuration
+
+### Development Certificate
+
+Trust the ASP.NET Core development certificate to avoid browser warnings:
+
+```bash
+dotnet dev-certs https --trust
+```
+
+### Static Files Directory
+
+Ensure the images directory exists for product images:
+
+```bash
+mkdir -p MiTienda_practica/wwwroot/imagenes
+```
+
+This directory is configured in `MiTienda_practica.csproj:18-20`
+
+### Environment Configuration
+
+The application supports multiple environments. Configure additional settings in:
+- `appsettings.Development.json` - Development-specific settings
+- `appsettings.Production.json` - Production settings (create if needed)
+
+### Session Configuration
+
+The application uses in-memory session storage configured in `Program.cs:25-32`:
+- **Idle Timeout:** 30 minutes
+- **Cookie Settings:** HttpOnly and Essential flags enabled
+
+For production, consider using distributed cache (Redis, SQL Server).
+
+### Authentication Settings
+
+Cookie authentication is configured in `Program.cs:34-41` with:
+- **Login Path:** `/Cuenta/Login`
+- **Session Duration:** 30 minutes
+
+## Architecture Overview
+
+### Project Structure
+
+```
+MiTienda_practica/
+├── Context/          # DbContext and EF configuration
+├── Controllers/      # MVC controllers
+├── Entities/        # Database entity models
+├── Migrations/      # EF Core migrations
+├── Models/          # View models
+├── Repositories/    # Data access layer
+├── Services/        # Business logic layer
+├── Views/           # Razor views
+├── wwwroot/         # Static files
+│   └── imagenes/   # Product images
+├── Program.cs       # Application entry point
+└── appsettings.json # Configuration
+```
+
+### Service Registration
+
+The application uses dependency injection configured in `Program.cs:13-23`:
+
+```csharp Program.cs
+// Database context
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    options.UseSqlServer(builder.Configuration.GetConnectionString("CadenaSql"));
+});
+
+// Repositories and services
+builder.Services.AddScoped(typeof(GenericRepository<>));
+builder.Services.AddScoped<OrdenRepository>();
+builder.Services.AddScoped<CategoriaService>();
+builder.Services.AddScoped<ProductoService>();
+builder.Services.AddScoped<OrdenService>();
+builder.Services.AddScoped<UsuarioService>();
+```
+
+### Middleware Pipeline
+
+The request pipeline is configured in `Program.cs:43-65`:
+1. Exception handling (development vs. production)
+2. Static files middleware
+3. Routing
+4. Session middleware
+5. Authentication/Authorization
+6. MVC endpoint routing
+
+## Troubleshooting
+
+### Database Connection Failed
+
+**Error:** `A network-related or instance-specific error occurred`
+
+**Solution:**
+- Verify SQL Server is running: `services.msc` (Windows) or `docker ps` (Docker)
+- Check firewall allows port 1433
+- Verify connection string credentials
+- Test connection with `sqlcmd` or SSMS
+
+### Migration Errors
+
+**Error:** `The entity type 'X' requires a primary key`
+
+**Solution:**
+- Ensure all entities have a primary key defined in `AppDbContext.cs`
+- Drop database and reapply migrations:
+  ```bash
+  dotnet ef database drop
+  dotnet ef database update
+  ```
+
+### Port Already in Use
+
+**Error:** `Failed to bind to address https://127.0.0.1:5001`
+
+**Solution:**
+- Find and kill the process using the port:
+  ```bash
+  # Windows
+  netstat -ano | findstr :5001
+  taskkill /PID <PID> /F
+  
+  # Linux/macOS
+  lsof -ti:5001 | xargs kill -9
+  ```
+- Or use different ports: `dotnet run --urls "https://localhost:7000"`
+
+### NuGet Package Restore Failed
+
+**Error:** `Unable to load the service index`
+
+**Solution:**
+- Clear NuGet cache:
+  ```bash
+  dotnet nuget locals all --clear
+  dotnet restore
+  ```
+- Check internet connection and proxy settings
+
+### Build Errors
+
+**Error:** `The type or namespace name 'X' could not be found`
+
+**Solution:**
+- Clean and rebuild:
+  ```bash
+  dotnet clean
+  dotnet build
+  ```
+- Ensure .NET 9 SDK is installed: `dotnet --version`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Get started with a minimal setup
+  </Card>
+  <Card title="Database Schema" icon="database" href="/development/database-setup">
+    Understand the data model
+  </Card>
+  <Card title="Configuration Guide" icon="gear" href="/development/configuration">
+    Advanced configuration options
+  </Card>
+  <Card title="Deployment" icon="cloud" href="/development/deployment">
+    Deploy to production environments
+  </Card>
+</CardGroup>
+
+## Getting Help
+
+If you encounter issues during installation:
+
+1. Check the [Troubleshooting](#troubleshooting) section above
+2. Review application logs in the console output
+3. Verify all prerequisites are installed with correct versions
+4. Consult the [ASP.NET Core documentation](https://docs.microsoft.com/aspnet/core/)
+5. Check SQL Server connection with SSMS or Azure Data Studio

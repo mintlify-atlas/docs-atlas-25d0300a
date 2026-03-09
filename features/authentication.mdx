@@ -1,0 +1,375 @@
+---
+title: 'Authentication'
+description: 'User registration, login, and role-based access control using ASP.NET Core Identity'
+icon: 'shield-check'
+---
+
+MiTienda Web implements cookie-based authentication with role-based access control, allowing users to register, log in, and access protected features.
+
+## Overview
+
+The authentication system provides:
+- **User registration** with email and password
+- **Cookie-based login** using ASP.NET Core Authentication
+- **Role-based authorization** for different user types
+- **Claims-based identity** for accessing user information
+- **Secure session management** with configurable persistence
+
+## User Experience
+
+<Steps>
+  <Step title="Register Account">
+    New users can create an account by providing:
+    - Full name
+    - Email address
+    - Password (with confirmation)
+    - Role selection
+    
+    After successful registration, users are prompted to log in.
+  </Step>
+  
+  <Step title="Log In">
+    Existing users enter their email and password to access their account.
+    
+    On successful login, users are redirected to the home page.
+  </Step>
+  
+  <Step title="Access Protected Features">
+    Logged-in users can:
+    - Complete checkout and place orders
+    - View order history
+    - Access role-specific features
+  </Step>
+  
+  <Step title="Log Out">
+    Users can log out at any time, clearing their authentication cookie.
+  </Step>
+</Steps>
+
+## Technical Implementation
+
+### User Entity
+
+The `Usuario` entity stores user credentials and profile information:
+
+```csharp Usuario.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace MiTienda_practica.Entities
+{
+    public class Usuario
+    {
+        public int UsuarioId { get; set; }
+        [Required]
+        public string NombreCompleto { get; set; }
+        [Required]
+        public string Correo { get; set; }
+        [Required]
+        public string Contrasena { get; set; }
+        [Required]
+        public string Rol { get; set; }
+
+        public ICollection<Orden> Ordenes { get; set; }
+    }
+}
+```
+
+<Warning>
+  **Security Notice**: The current implementation stores passwords in plain text. In production, you should use ASP.NET Core Identity or hash passwords with BCrypt, PBKDF2, or Argon2.
+</Warning>
+
+### Login Flow
+
+The login process validates credentials and creates an authentication cookie:
+
+```csharp CuentaController.cs:18
+[HttpPost]
+public async Task <IActionResult> Login(LoginVM viewmodel)
+{
+
+    if (!ModelState.IsValid) return View(viewmodel);
+    var found = await _usuarioService.Login(viewmodel);
+
+    if (found.UsuarioId == 0)
+    {
+        ViewBag.MensajeExito = "No hay coincidencias";
+        return View();
+
+
+    }
+    else
+    {
+        List<Claim>claims = new List<Claim>
+        {
+            new Claim(ClaimTypes.NameIdentifier, found.UsuarioId.ToString()),
+            new Claim(ClaimTypes.Name, found.NombreCompleto),
+            new Claim(ClaimTypes.Email, found.Correo),
+            new Claim(ClaimTypes.Role, found.Rol)
+        };
+
+        var claimsIdentity = new ClaimsIdentity(
+            claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        await HttpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            new ClaimsPrincipal(claimsIdentity),
+            new AuthenticationProperties() {AllowRefresh= true, IsPersistent= true }
+            );
+        return RedirectToAction("Index", "Home");
+    }
+}
+```
+
+<Info>
+  **Authentication Properties**:
+  - `AllowRefresh = true`: Allows the authentication cookie to be refreshed
+  - `IsPersistent = true`: Cookie persists across browser sessions ("Remember Me" behavior)
+</Info>
+
+### User Validation
+
+The `UsuarioService` validates credentials against the database:
+
+```csharp UsuarioService.cs:11
+public async Task<UsuarioVM> Login(LoginVM loginVM)
+{
+    var conditions = new List<Expression<Func<Usuario, bool>>>()
+    {
+        x => x.Correo == loginVM.Correo,
+        x => x.Contrasena == loginVM.Contrasena,
+    };
+
+    var found = await _usuarioRepository.GetByFilter(conditions: conditions.ToArray());
+
+    var usuarioVM = new UsuarioVM();
+
+    if (found != null)
+    {
+        usuarioVM.UsuarioId = found.UsuarioId;
+        usuarioVM.NombreCompleto = found.NombreCompleto;
+        usuarioVM.Correo = found.Correo;
+        usuarioVM.Rol = found.Rol;
+    }
+
+    return usuarioVM;
+}
+```
+
+### Registration Process
+
+New users can register with validation for duplicate emails and password matching:
+
+```csharp UsuarioService.cs:34
+public async Task Registro(UsuarioVM usuarioVM)
+{
+    if(usuarioVM.Contrasena!= usuarioVM.RepiteContrasena)
+        throw new InvalidOperationException("Las contraseñas no son iguales");
+
+    var conditions = new List<Expression<Func<Usuario, bool>>>()
+    {
+        x => x.Correo == usuarioVM.Correo,
+    };
+
+    var foundCorreo = await _usuarioRepository.GetByFilter(conditions:conditions.ToArray());
+
+    if (foundCorreo != null)
+        throw new InvalidOperationException("El correo ya ha sido registrado");
+
+    var entity = new Usuario()
+    {
+        NombreCompleto = usuarioVM.NombreCompleto,
+        Correo = usuarioVM.Correo,
+        Rol = usuarioVM.Rol,
+        Contrasena = usuarioVM.Contrasena,
+    }; 
+
+    await _usuarioRepository.AddAsync(entity);
+}
+```
+
+<Tabs>
+  <Tab title="Validation 1">
+    **Password Confirmation**: Ensures both password fields match before processing registration.
+  </Tab>
+  
+  <Tab title="Validation 2">
+    **Unique Email**: Checks that the email address isn't already registered in the system.
+  </Tab>
+  
+  <Tab title="Error Handling">
+    Validation failures throw `InvalidOperationException` with descriptive messages displayed to users.
+  </Tab>
+</Tabs>
+
+### Registration Controller
+
+The registration controller handles form submission and feedback:
+
+```csharp CuentaController.cs:59
+[HttpPost]
+public async Task<IActionResult> Registro(UsuarioVM viewmodel)
+{
+
+    if (!ModelState.IsValid) return View(viewmodel);
+
+    try
+    {
+        await _usuarioService.Registro(viewmodel);
+        ViewBag.MensajeExito = "Tu cuenta ha sido registrada, porfavor intenta Iniciar sesión";
+        ViewBag.Class = "alert-success";
+    }
+    catch(Exception ex)
+    {
+        ViewBag.MensajeExito = ex.Message;
+        ViewBag.Class = "alert-success";
+    }
+    return View();
+}
+```
+
+### Logout
+
+Logging out simply clears the authentication cookie:
+
+```csharp CuentaController.cs:79
+public async Task<IActionResult> CerrarSesion()
+{
+    await HttpContext.SignOutAsync(
+        CookieAuthenticationDefaults.AuthenticationScheme);
+    return RedirectToAction("Index", "Home");
+}
+```
+
+## Claims-Based Identity
+
+Once authenticated, user information is available via claims throughout the application:
+
+```csharp
+// Access user ID in any controller
+var userId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+
+// Check if user is authenticated
+if (User.Identity.IsAuthenticated)
+{
+    // User-specific logic
+}
+
+// Access user role
+var role = User.FindFirst(ClaimTypes.Role)?.Value;
+```
+
+<Note>
+  Claims are stored in the authentication cookie and are available on every request without additional database queries.
+</Note>
+
+## Role-Based Authorization
+
+The system supports role-based access control through the `Rol` property:
+
+<CodeGroup>
+```csharp Controller Level
+[Authorize(Roles = "Admin")]
+public class AdminController : Controller
+{
+    // Only accessible to Admin role
+}
+```
+
+```csharp Action Level
+[Authorize(Roles = "Admin,Manager")]
+public IActionResult SensitiveAction()
+{
+    // Accessible to Admin or Manager roles
+}
+```
+
+```csharp View Level
+@if (User.IsInRole("Admin"))
+{
+    <a href="/admin/managing-products">Admin Panel</a>
+}
+```
+</CodeGroup>
+
+## View Models
+
+Authentication uses two primary view models:
+
+<Tabs>
+  <Tab title="LoginVM">
+    ```csharp LoginVM.cs
+    using System.ComponentModel.DataAnnotations;
+
+    namespace MiTienda_practica.Models
+    {
+        public class LoginVM
+        {
+            [Required]
+            public string Correo {  get; set; }
+            [Required]
+            public string Contrasena { get; set; }
+        }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="UsuarioVM">
+    Used for both registration and displaying user information. Includes:
+    - `UsuarioId`
+    - `NombreCompleto`
+    - `Correo`
+    - `Contrasena`
+    - `RepiteContrasena` (for registration)
+    - `Rol`
+  </Tab>
+</Tabs>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Cookie Authentication" icon="cookie">
+    Uses ASP.NET Core's built-in cookie authentication for secure, stateless authentication.
+  </Card>
+  
+  <Card title="Claims Principal" icon="id-card">
+    User data stored as claims in the authentication cookie for fast access without DB queries.
+  </Card>
+  
+  <Card title="Persistent Sessions" icon="floppy-disk">
+    Remember Me functionality keeps users logged in across browser sessions.
+  </Card>
+  
+  <Card title="Role Support" icon="users">
+    Built-in role system enables different access levels for various user types.
+  </Card>
+</CardGroup>
+
+## Security Considerations
+
+<Warning>
+  **Production Recommendations**:
+  
+  1. **Password Hashing**: Replace plain-text passwords with proper hashing (BCrypt, Argon2)
+  2. **HTTPS Only**: Enable `CookieSecure = CookieSecurePolicy.Always`
+  3. **Anti-Forgery**: Add `[ValidateAntiForgeryToken]` to all POST actions
+  4. **Account Lockout**: Implement lockout after failed login attempts
+  5. **Password Strength**: Enforce password complexity requirements
+  6. **Two-Factor Auth**: Consider adding 2FA for sensitive operations
+</Warning>
+
+## Checkout Integration
+
+Authentication is required for checkout to associate orders with users:
+
+```csharp HomeController.cs:121
+var userId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+await _ordenService.AddAsync(carrito,int.Parse(userId));
+```
+
+<Tip>
+  The `[Authorize]` attribute can be added to the checkout action to automatically redirect unauthenticated users to the login page.
+</Tip>
+
+## Related Features
+
+- [Order Management](/features/order-management) - Orders are linked to authenticated users
+- [Shopping Cart](/features/shopping-cart) - Login required to complete checkout

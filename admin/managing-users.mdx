@@ -1,0 +1,439 @@
+---
+title: 'Managing Users'
+description: 'User management and authentication in MiTienda Web'
+icon: 'users'
+---
+
+## Overview
+
+MiTienda Web implements a role-based authentication system that supports two user roles: **Admin** and **Customer**. User management includes registration, login, and role-based access control throughout the application.
+
+<Info>
+  The application uses ASP.NET Core Identity for authentication and authorization, with custom user services handling registration and login operations.
+</Info>
+
+## User Entity Structure
+
+Users in MiTienda Web have the following structure:
+
+```csharp
+public class Usuario
+{
+    public int UsuarioId { get; set; }
+    [Required]
+    public string NombreCompleto { get; set; }
+    [Required]
+    public string Correo { get; set; }
+    [Required]
+    public string Contrasena { get; set; }
+    [Required]
+    public string Rol { get; set; }
+    
+    public ICollection<Orden> Ordenes { get; set; }
+}
+```
+
+<Warning>
+  The current implementation stores passwords directly in the database. For production systems, passwords should be hashed using ASP.NET Core Identity's password hashing mechanisms.
+</Warning>
+
+## User Roles
+
+The system supports two distinct roles:
+
+<Tabs>
+  <Tab title="Admin">
+    **Admin Role** has access to:
+    - Product management (create, edit, delete)
+    - Category management (create, edit, delete)
+    - View all orders across all users
+    - Full administrative dashboard
+    
+    **Authorization:**
+    ```csharp
+    [Authorize(Roles = "Admin")]
+    public class ProductoController : Controller
+    {
+        // Admin-only actions
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Customer">
+    **Customer Role** has access to:
+    - Browse product catalog
+    - Add items to shopping cart
+    - Place orders
+    - View their own order history
+    
+    **Authorization:**
+    ```csharp
+    [Authorize]
+    public class UsuarioController : Controller
+    {
+        public async Task<IActionResult> MisOrdenes()
+        {
+            var usuarioId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+            var ordenesvm = await _ordenService.GetAllByUserAsync(int.Parse(usuarioId));
+            return View(ordenesvm);
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## User Registration
+
+### Registration Process
+
+<Steps>
+  <Step title="Access Registration Form">
+    Users navigate to the registration page to create a new account.
+  </Step>
+  
+  <Step title="Fill Registration Details">
+    Enter the following required information:
+    - **NombreCompleto** (Full Name)
+    - **Correo** (Email)
+    - **Contrasena** (Password)
+    - **RepiteContrasena** (Confirm Password)
+    - **Rol** (Role: Admin or Customer)
+  </Step>
+  
+  <Step title="Validate and Create Account">
+    The system validates the data and creates the user account.
+  </Step>
+</Steps>
+
+### Registration View Model
+
+```csharp
+public class UsuarioVM
+{
+    public int UsuarioId { get; set; }
+    [Required]
+    public string NombreCompleto { get; set; }
+    [Required]
+    public string Correo { get; set; }
+    [Required]
+    public string Contrasena { get; set; }
+    [Required]
+    public string Rol { get; set; }
+    [Required]
+    public string RepiteContrasena { get; set; }
+}
+```
+
+### Registration Implementation
+
+The `Registro()` method in `UsuarioService` handles user registration with validation:
+
+```csharp
+public async Task Registro(UsuarioVM usuarioVM)
+{
+    // Validate passwords match
+    if(usuarioVM.Contrasena != usuarioVM.RepiteContrasena)
+        throw new InvalidOperationException("Las contraseñas no son iguales");
+    
+    // Check if email already exists
+    var conditions = new List<Expression<Func<Usuario, bool>>>()
+    {
+        x => x.Correo == usuarioVM.Correo,
+    };
+    
+    var foundCorreo = await _usuarioRepository.GetByFilter(conditions:conditions.ToArray());
+    
+    if (foundCorreo != null)
+        throw new InvalidOperationException("El correo ya ha sido registrado");
+    
+    // Create new user
+    var entity = new Usuario()
+    {
+        NombreCompleto = usuarioVM.NombreCompleto,
+        Correo = usuarioVM.Correo,
+        Rol = usuarioVM.Rol,
+        Contrasena = usuarioVM.Contrasena,
+    }; 
+    
+    await _usuarioRepository.AddAsync(entity);
+}
+```
+
+<Note>
+  The registration process includes two key validations:
+  1. **Password confirmation**: Ensures both password fields match
+  2. **Email uniqueness**: Prevents duplicate email registrations
+</Note>
+
+## User Login
+
+### Login Process
+
+<Steps>
+  <Step title="Access Login Form">
+    Users navigate to the login page and enter their credentials.
+  </Step>
+  
+  <Step title="Enter Credentials">
+    Provide:
+    - **Correo** (Email)
+    - **Contrasena** (Password)
+  </Step>
+  
+  <Step title="Authenticate User">
+    The system validates credentials and creates an authentication session.
+  </Step>
+</Steps>
+
+### Login View Model
+
+```csharp
+public class LoginVM
+{
+    [Required]
+    public string Correo { get; set; }
+    [Required]
+    public string Contrasena { get; set; }
+}
+```
+
+### Login Implementation
+
+The `Login()` method in `UsuarioService` authenticates users:
+
+```csharp
+public async Task<UsuarioVM> Login(LoginVM loginVM)
+{
+    var conditions = new List<Expression<Func<Usuario, bool>>>()
+    {
+        x => x.Correo == loginVM.Correo,
+        x => x.Contrasena == loginVM.Contrasena,
+    };
+    
+    var found = await _usuarioRepository.GetByFilter(conditions: conditions.ToArray());
+    
+    var usuarioVM = new UsuarioVM();
+    
+    if (found != null)
+    {
+        usuarioVM.UsuarioId = found.UsuarioId;
+        usuarioVM.NombreCompleto = found.NombreCompleto;
+        usuarioVM.Correo = found.Correo;
+        usuarioVM.Rol = found.Rol;
+    }
+    
+    return usuarioVM;
+}
+```
+
+<Info>
+  The login method returns a populated `UsuarioVM` if credentials are valid, or an empty view model if authentication fails.
+</Info>
+
+## Authorization Patterns
+
+### Controller-Level Authorization
+
+Restrict entire controllers to specific roles:
+
+```csharp
+[Authorize(Roles = "Admin")]
+public class ProductoController : Controller
+{
+    // All actions require Admin role
+}
+
+[Authorize(Roles = "Admin")]
+public class CategoriaController : Controller
+{
+    // All actions require Admin role
+}
+```
+
+### Action-Level Authorization
+
+Apply authorization to individual actions:
+
+```csharp
+[Authorize]
+public class UsuarioController : Controller
+{
+    // Any authenticated user can access
+    public async Task<IActionResult> MisOrdenes()
+    {
+        // ...
+    }
+}
+```
+
+### Accessing User Claims
+
+Retrieve the current user's ID from claims:
+
+```csharp
+var usuarioId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+var ordenesvm = await _ordenService.GetAllByUserAsync(int.Parse(usuarioId));
+```
+
+## User Session Management
+
+### Current User Context
+
+The authenticated user's information is available through `HttpContext.User`:
+
+- **NameIdentifier**: User ID
+- **Name**: User name
+- **Role**: User role(s)
+
+<CodeGroup>
+```csharp Controller Example
+public async Task<IActionResult> MisOrdenes()
+{
+    var usuarioId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value; 
+    var ordenesvm = await _ordenService.GetAllByUserAsync(int.Parse(usuarioId));
+    return View(ordenesvm);
+}
+```
+
+```csharp Role Check
+if (User.IsInRole("Admin"))
+{
+    // Admin-specific logic
+}
+```
+</CodeGroup>
+
+## User-Order Relationship
+
+Users are linked to their orders through the `Ordenes` collection:
+
+```csharp
+public class Usuario
+{
+    public int UsuarioId { get; set; }
+    // ... other properties
+    public ICollection<Orden> Ordenes { get; set; }
+}
+
+public class Orden
+{
+    public int OrdenId { get; set; }
+    public DateTime FechaOrden { get; set; }
+    public int UsuarioId { get; set; }
+    public decimal TotalMonto { get; set; }
+    
+    public Usuario? Usuario { get; set; }
+    public ICollection<ArticuloPedido> ArticuloPedidos { get; set; }
+}
+```
+
+### Retrieving User Orders
+
+The `UsuarioController` provides access to user-specific orders:
+
+```csharp
+[Authorize]
+public class UsuarioController(OrdenService _ordenService) : Controller
+{
+    public async Task<IActionResult> MisOrdenes()
+    {
+        var usuarioId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value; 
+        var ordenesvm = await _ordenService.GetAllByUserAsync(int.Parse(usuarioId));
+        return View(ordenesvm);
+    }
+}
+```
+
+<Tip>
+  The `MisOrdenes` action ensures users can only view their own orders by using the authenticated user's ID from claims.
+</Tip>
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Password Hashing" icon="lock">
+    **Current Implementation**: Passwords are stored in plain text
+    
+    **Recommendation**: Implement password hashing using ASP.NET Core Identity's `PasswordHasher<TUser>` or BCrypt.
+  </Card>
+  
+  <Card title="Email Validation" icon="envelope">
+    Ensure unique email addresses during registration to prevent account conflicts.
+  </Card>
+  
+  <Card title="Role-Based Access" icon="shield">
+    Use `[Authorize(Roles = "...")]` attributes consistently to protect administrative functions.
+  </Card>
+  
+  <Card title="Password Complexity" icon="key">
+    Consider implementing password complexity requirements in production (minimum length, special characters, etc.).
+  </Card>
+</CardGroup>
+
+## Common User Management Scenarios
+
+<Tabs>
+  <Tab title="New User Registration">
+    1. User accesses registration page
+    2. Fills out registration form with all required fields
+    3. System validates:
+       - Passwords match
+       - Email not already registered
+    4. User account created
+    5. User can log in with credentials
+  </Tab>
+  
+  <Tab title="User Login">
+    1. User accesses login page
+    2. Enters email and password
+    3. System validates credentials
+    4. If valid:
+       - Authentication cookie created
+       - User claims established
+       - Redirected to appropriate page based on role
+    5. If invalid:
+       - Error message displayed
+       - User remains on login page
+  </Tab>
+  
+  <Tab title="View Order History">
+    1. Authenticated user navigates to "Mis Órdenes"
+    2. System retrieves user ID from claims
+    3. Orders filtered by user ID
+    4. User sees only their own orders
+    5. Each order shows:
+       - Order date
+       - Total amount
+       - Order items with quantities and prices
+  </Tab>
+</Tabs>
+
+## Error Handling
+
+The user service throws specific exceptions for validation failures:
+
+```csharp
+// Password mismatch
+if(usuarioVM.Contrasena != usuarioVM.RepiteContrasena)
+    throw new InvalidOperationException("Las contraseñas no son iguales");
+
+// Duplicate email
+if (foundCorreo != null)
+    throw new InvalidOperationException("El correo ya ha sido registrado");
+```
+
+<Warning>
+  Ensure proper exception handling in controllers to display user-friendly error messages.
+</Warning>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Managing Orders" icon="shopping-cart" href="/admin/managing-orders">
+    Learn how orders are created and managed for users
+  </Card>
+  
+  <Card title="Managing Products" icon="box" href="/admin/managing-products">
+    Understand admin-only product management features
+  </Card>
+</CardGroup>

@@ -1,0 +1,202 @@
+---
+title: 'System Architecture'
+description: 'Overview of MiTienda Web architecture and design patterns'
+---
+
+## Introduction
+
+MiTienda Web follows a **layered architecture** pattern built with ASP.NET Core 9 MVC. The application implements clean separation of concerns through distinct layers: presentation (MVC), business logic (services), and data access (repositories).
+
+## Architecture Overview
+
+The system is organized into the following layers:
+
+```
+┌─────────────────────────────────────┐
+│     Controllers (Presentation)       │
+│  Handles HTTP requests/responses     │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│      Services (Business Logic)       │
+│   CategoriaService, ProductoService  │
+│   OrdenService, UsuarioService       │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│    Repositories (Data Access)        │
+│   GenericRepository<T>               │
+│   OrdenRepository                    │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│      AppDbContext (EF Core)          │
+│    Database: SQL Server              │
+└─────────────────────────────────────┘
+```
+
+## Core Design Patterns
+
+<CardGroup cols={2}>
+  <Card title="MVC Pattern" icon="layer-group">
+    Controllers handle requests, Services process business logic, and Views render responses
+  </Card>
+  <Card title="Repository Pattern" icon="database">
+    Abstracts data access through GenericRepository&lt;T&gt; for CRUD operations
+  </Card>
+  <Card title="Service Layer Pattern" icon="gears">
+    Business logic encapsulated in dedicated service classes
+  </Card>
+  <Card title="Dependency Injection" icon="plug">
+    ASP.NET Core built-in DI container manages all dependencies
+  </Card>
+</CardGroup>
+
+## Dependency Injection Configuration
+
+All services and repositories are registered in `Program.cs` using scoped lifetime:
+
+```csharp
+// Database Context
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    options.UseSqlServer(builder.Configuration.GetConnectionString("CadenaSql"));
+});
+
+// Repositories
+builder.Services.AddScoped(typeof(GenericRepository<>));
+builder.Services.AddScoped<OrdenRepository>();
+
+// Services
+builder.Services.AddScoped<CategoriaService>();
+builder.Services.AddScoped<ProductoService>();
+builder.Services.AddScoped<OrdenService>();
+builder.Services.AddScoped<UsuarioService>();
+```
+
+<Info>
+All services use **scoped lifetime**, meaning a new instance is created per HTTP request and shared within that request.
+</Info>
+
+## Layer Responsibilities
+
+<Steps>
+  <Step title="Controllers Layer">
+    - Receive and validate HTTP requests
+    - Call appropriate service methods
+    - Return views or redirect to actions
+    - Handle authentication and authorization
+  </Step>
+  
+  <Step title="Services Layer">
+    - Implement business logic and validation
+    - Coordinate between multiple repositories
+    - Transform between entities and view models
+    - Handle file operations (e.g., product images)
+  </Step>
+  
+  <Step title="Repositories Layer">
+    - Provide CRUD operations
+    - Execute database queries using LINQ
+    - Handle Entity Framework DbContext
+    - Manage database transactions
+  </Step>
+  
+  <Step title="Entities Layer">
+    - Define domain models mapped to database tables
+    - Specify relationships between entities
+    - Include data annotations for validation
+  </Step>
+</Steps>
+
+## Data Flow Example
+
+Here's how a typical request flows through the architecture when creating a product:
+
+```
+1. User submits product form
+   ↓
+2. ProductoController.Create(ProductoVM viewModel)
+   ↓
+3. ProductoService.AddAsync(viewModel)
+   - Validates business rules
+   - Handles image upload
+   - Maps VM to Entity
+   ↓
+4. GenericRepository<Producto>.AddAsync(entity)
+   - Adds entity to DbContext
+   - Saves changes to database
+   ↓
+5. Transaction committed
+   ↓
+6. Controller redirects to Index
+```
+
+## Key Technologies
+
+<CardGroup cols={2}>
+  <Card title="ASP.NET Core 9 MVC" icon="microsoft">
+    Web framework for building the application
+  </Card>
+  <Card title="Entity Framework Core" icon="table">
+    ORM for database operations and migrations
+  </Card>
+  <Card title="SQL Server" icon="database">
+    Relational database for data persistence
+  </Card>
+  <Card title="Primary Constructor" icon="code">
+    C# 12 feature for cleaner dependency injection
+  </Card>
+</CardGroup>
+
+## Authentication & Session Management
+
+The application uses cookie-based authentication with session support:
+
+```csharp
+// Session configuration
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+    options.Cookie.HttpOnly = true;
+    options.Cookie.IsEssential = true;
+});
+
+// Cookie authentication
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/Cuenta/Login";
+        options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+    });
+```
+
+<Tip>
+Sessions store the shopping cart, while authentication cookies maintain user identity across requests.
+</Tip>
+
+## Benefits of This Architecture
+
+1. **Separation of Concerns**: Each layer has a single, well-defined responsibility
+2. **Testability**: Services and repositories can be easily unit tested
+3. **Maintainability**: Changes in one layer don't affect others
+4. **Reusability**: Generic repository reduces code duplication
+5. **Scalability**: Clear structure makes it easier to add new features
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Database Entities" icon="shapes" href="/architecture/entities">
+    Learn about the domain models and relationships
+  </Card>
+  <Card title="Service Layer" icon="gears" href="/architecture/services">
+    Explore business logic implementation
+  </Card>
+  <Card title="Repository Pattern" icon="database" href="/architecture/repositories">
+    Understand data access abstraction
+  </Card>
+</CardGroup>

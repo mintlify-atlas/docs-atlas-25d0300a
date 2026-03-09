@@ -1,0 +1,329 @@
+---
+title: 'Application Configuration'
+description: 'Configure connection strings, authentication, session management, and application settings'
+icon: 'gear'
+---
+
+## Configuration Files
+
+MiTienda Web uses the standard ASP.NET Core configuration system with environment-specific settings:
+
+- **`appsettings.json`** - Base configuration for all environments
+- **`appsettings.Development.json`** - Development-specific overrides
+- **`appsettings.Production.json`** - Production settings (create as needed)
+
+<Note>
+  Configuration files are loaded in order, with environment-specific files overriding base settings.
+</Note>
+
+## Database Connection String
+
+### Configuration
+
+The database connection is configured in `appsettings.json` under the `ConnectionStrings` section:
+
+```json appsettings.json
+{
+  "ConnectionStrings": {
+    "CadenaSql": "Data Source=Jericho;Database=DBTiendaWeb;User ID=sa;Password=1818;TrustServerCertificate=True;"
+  }
+}
+```
+
+<Warning>
+  The example connection string above is from the development environment. **Never commit production credentials to source control.**
+</Warning>
+
+### Connection String Components
+
+| Component | Description | Example |
+|-----------|-------------|----------|
+| `Data Source` | SQL Server instance name or IP address | `localhost`, `(localdb)\mssqllocaldb`, `Jericho` |
+| `Database` | Database name | `DBTiendaWeb` |
+| `User ID` | SQL Server authentication username | `sa` |
+| `Password` | SQL Server authentication password | `YourSecurePassword` |
+| `TrustServerCertificate` | Trust self-signed certificates (dev only) | `True` |
+
+### Environment-Specific Connections
+
+Create different connection strings for each environment:
+
+<CodeGroup>
+```json appsettings.Development.json
+{
+  "ConnectionStrings": {
+    "CadenaSql": "Data Source=(localdb)\\mssqllocaldb;Database=DBTiendaWeb_Dev;Integrated Security=True;TrustServerCertificate=True;"
+  }
+}
+```
+
+```json appsettings.Production.json
+{
+  "ConnectionStrings": {
+    "CadenaSql": "Data Source=prod-server.database.windows.net;Database=DBTiendaWeb;User ID=produser;Password=${DB_PASSWORD};Encrypt=True;"
+  }
+}
+```
+</CodeGroup>
+
+<Tip>
+  Use **Windows Authentication** (Integrated Security) for local development:
+  ```
+  Data Source=(localdb)\mssqllocaldb;Database=DBTiendaWeb;Integrated Security=True;TrustServerCertificate=True;
+  ```
+</Tip>
+
+### Using Environment Variables
+
+For production, store sensitive connection strings in environment variables:
+
+```bash
+export ConnectionStrings__CadenaSql="Data Source=prod-server;Database=DBTiendaWeb;User ID=produser;Password=SecurePassword123;"
+```
+
+<Info>
+  ASP.NET Core uses double underscores (`__`) to represent nested configuration keys in environment variables.
+</Info>
+
+## Database Context Registration
+
+The database context is registered in `Program.cs` (lines 13-16):
+
+```csharp Program.cs
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    options.UseSqlServer(builder.Configuration.GetConnectionString("CadenaSql"));
+});
+```
+
+This configuration:
+- Registers `AppDbContext` with dependency injection
+- Configures SQL Server as the database provider
+- Reads the connection string named "CadenaSql" from configuration
+
+## Dependency Injection Configuration
+
+MiTienda Web uses service layer and repository patterns. Services are registered in `Program.cs` (lines 18-23):
+
+```csharp Program.cs
+builder.Services.AddScoped(typeof(GenericRepository<>));
+builder.Services.AddScoped<OrdenRepository>();
+builder.Services.AddScoped<CategoriaService>();
+builder.Services.AddScoped<ProductoService>();
+builder.Services.AddScoped<OrdenService>();
+builder.Services.AddScoped<UsuarioService>();
+```
+
+<Info>
+  **Scoped lifetime** means a new instance is created per HTTP request, which is ideal for services that interact with the database.
+</Info>
+
+## Session Configuration
+
+Sessions are used to maintain shopping cart state and user preferences.
+
+### Enable Sessions
+
+Session configuration in `Program.cs` (lines 25-32):
+
+```csharp Program.cs
+builder.Services.AddDistributedMemoryCache();
+
+builder.Services.AddSession(options =>
+{
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+    options.Cookie.HttpOnly = true;
+    options.Cookie.IsEssential = true;
+});
+```
+
+### Session Settings
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `IdleTimeout` | 30 minutes | Session expires after 30 minutes of inactivity |
+| `Cookie.HttpOnly` | `true` | Prevents client-side JavaScript from accessing the session cookie (security) |
+| `Cookie.IsEssential` | `true` | Session cookie is always sent, even if user hasn't consented to non-essential cookies |
+
+<Warning>
+  The current implementation uses **in-memory cache** for sessions. This means:
+  - Sessions are lost when the application restarts
+  - Not suitable for load-balanced environments
+  
+  For production, consider using distributed cache (Redis, SQL Server).
+</Warning>
+
+### Session Middleware
+
+The session middleware must be registered in the pipeline (line 53):
+
+```csharp Program.cs
+app.UseSession();
+```
+
+<Note>
+  `UseSession()` must be called **before** `UseAuthorization()` and **after** `UseRouting()`.
+</Note>
+
+## Authentication Configuration
+
+MiTienda Web uses cookie-based authentication for user login.
+
+### Authentication Setup
+
+Authentication is configured in `Program.cs` (lines 34-41):
+
+```csharp Program.cs
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/Cuenta/Login";
+        options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+        //options.LogoutPath = "/Usuario/Logout";
+        //options.AccessDeniedPath = "/Usuario/AccessDenied";
+    });
+```
+
+### Authentication Settings
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `LoginPath` | `/Cuenta/Login` | Redirect unauthenticated users to this path |
+| `ExpireTimeSpan` | 30 minutes | Authentication cookie expires after 30 minutes |
+| `LogoutPath` | (commented) | Optional custom logout path |
+| `AccessDeniedPath` | (commented) | Optional access denied page |
+
+### Customizing Authentication
+
+To add additional features:
+
+<CodeGroup>
+```csharp Sliding Expiration
+options.SlidingExpiration = true; // Renew cookie on each request
+```
+
+```csharp Access Denied Path
+options.AccessDeniedPath = "/Cuenta/AccessDenied";
+```
+
+```csharp Custom Cookie Name
+options.Cookie.Name = "MiTienda.Auth";
+```
+</CodeGroup>
+
+## Logging Configuration
+
+Logging levels are configured in `appsettings.json`:
+
+```json appsettings.json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+```
+
+### Log Levels
+
+| Level | Usage |
+|-------|-------|
+| `Trace` | Very detailed logs, may include sensitive data |
+| `Debug` | Debugging information |
+| `Information` | General informational messages |
+| `Warning` | Abnormal or unexpected events |
+| `Error` | Errors and exceptions |
+| `Critical` | Critical failures |
+
+<Tip>
+  For development, set `Default` to `Debug` to see detailed logs:
+  ```json
+  "Default": "Debug"
+  ```
+</Tip>
+
+## Allowed Hosts
+
+The `AllowedHosts` setting controls which hosts can access the application:
+
+```json appsettings.json
+{
+  "AllowedHosts": "*"
+}
+```
+
+<Warning>
+  The wildcard `*` allows all hosts. In production, specify exact hosts:
+  ```json
+  "AllowedHosts": "example.com;www.example.com"
+  ```
+</Warning>
+
+## Middleware Pipeline
+
+The request pipeline is configured in `Program.cs` (lines 46-62):
+
+```csharp Program.cs
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Home/Error");
+}
+
+app.UseRouting();
+app.UseSession();
+app.UseAuthorization();
+app.MapStaticAssets();
+
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}")
+    .WithStaticAssets();
+```
+
+<Info>
+  **Middleware order is critical:**
+  1. Exception handling
+  2. Routing
+  3. Session
+  4. Authorization
+  5. Endpoints
+</Info>
+
+## Environment Variables
+
+### Setting Environment
+
+Set the `ASPNETCORE_ENVIRONMENT` variable:
+
+<CodeGroup>
+```bash Linux/macOS
+export ASPNETCORE_ENVIRONMENT=Development
+```
+
+```powershell Windows (PowerShell)
+$env:ASPNETCORE_ENVIRONMENT="Development"
+```
+
+```cmd Windows (CMD)
+set ASPNETCORE_ENVIRONMENT=Development
+```
+</CodeGroup>
+
+### Common Environments
+
+- **Development** - Local development with detailed error pages
+- **Staging** - Pre-production testing
+- **Production** - Live environment with error handling
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Setup" icon="database" href="/development/database-setup">
+    Configure and initialize the database
+  </Card>
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Understand the application architecture
+  </Card>
+</CardGroup>

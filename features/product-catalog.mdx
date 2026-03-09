@@ -1,0 +1,248 @@
+---
+title: 'Product Catalog'
+description: 'Browse products with category filtering and search functionality'
+icon: 'grid-2'
+---
+
+The product catalog is the core browsing experience of MiTienda Web, allowing customers to discover products through categories and search.
+
+## Overview
+
+The catalog system provides:
+- **Dynamic product listing** with real-time stock filtering
+- **Category-based navigation** for organized browsing
+- **Search functionality** across product names and descriptions
+- **Product detail pages** with full information and add-to-cart capability
+
+## User Experience Flow
+
+<Steps>
+  <Step title="Browse the Catalog">
+    Users land on the home page displaying all available products with positive stock.
+    
+    The catalog shows products alongside category filters in the sidebar.
+  </Step>
+  
+  <Step title="Filter by Category">
+    Click on any category to see only products within that category.
+    
+    The filter state is displayed at the top of the results.
+  </Step>
+  
+  <Step title="Search Products">
+    Use the search bar to find products by name or description.
+    
+    Search results display with a "Resultados para: [query]" header.
+  </Step>
+  
+  <Step title="View Product Details">
+    Click on any product to see its full details, including:
+    - Product name and description
+    - Current price
+    - Available stock quantity
+    - Product image
+    - Add to cart form
+  </Step>
+</Steps>
+
+## Technical Implementation
+
+### Data Models
+
+The catalog uses two primary entities:
+
+<CodeGroup>
+```csharp Producto.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace MiTienda_practica.Entities
+{
+    public class Producto
+    {
+        public int ProductoId { get; set; }
+        public int CategoriaId { get; set; }
+        [Required]
+        public string Nombre { get; set; }
+        [Required]
+        public string Descripcion { get; set; }
+        public decimal Precio { get; set; }
+        public int Stock { get; set; }
+        public string? ImagenNombre { get; set; } = null;
+        public Categoria? Categoria { get; set; }
+    }
+}
+```
+
+```csharp Categoria.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace MiTienda_practica.Entities
+{
+    public class Categoria
+    {
+        public int CategoriaId { get; set; }
+        [Required]
+        public string Nombre { get; set; }
+        public ICollection<Producto> Productos { get; set; }
+    }
+}
+```
+</CodeGroup>
+
+### Catalog Loading
+
+The main catalog view loads both categories and products:
+
+```csharp HomeController.cs:19
+public async Task<IActionResult> Index()
+{
+    var categorias = await _categoriaService.GetAllAsync();
+    var productos = await _productoService.GetCatalogoAsync();
+
+    var catalogo = new CatalogoVM
+    {
+        Categorias = categorias,
+        Productos = productos
+    };
+
+    return View(catalogo);
+}
+```
+
+<Note>
+  The `GetCatalogoAsync()` method automatically filters to show only products with `Stock > 0`, ensuring customers never see out-of-stock items.
+</Note>
+
+### Category Filtering
+
+When users click a category, the catalog filters to show only relevant products:
+
+```csharp HomeController.cs:33
+public async Task<IActionResult> FilterByCategoria(int id, string nombre)
+{
+    var categorias = await _categoriaService.GetAllAsync();
+    var productos = await _productoService.GetCatalogoAsync(categoriaId:id);
+
+    var catalogo = new CatalogoVM
+    {
+        Categorias = categorias,
+        Productos = productos,
+        filterBay = nombre
+    };
+
+    return View("Index",catalogo);
+}
+```
+
+### Search Functionality
+
+The search feature queries both product names and descriptions:
+
+```csharp HomeController.cs:48
+[HttpPost]
+public async Task<IActionResult> FilterBySearch(string value)
+{
+    var categorias = await _categoriaService.GetAllAsync();
+    var productos = await _productoService.GetCatalogoAsync(busqueda: value);
+
+    var catalogo = new CatalogoVM
+    {
+        Categorias = categorias,
+        Productos = productos,
+        filterBay = $"Resultados para: {value}"
+    };
+
+    return View("Index", catalogo);
+}
+```
+
+### Smart Filtering Logic
+
+The `ProductoService` implements flexible filtering with multiple conditions:
+
+```csharp ProductoService.cs:183
+public async Task<IEnumerable<ProductoVM>> GetCatalogoAsync(int categoriaId = 0, string? busqueda = null)
+{
+    var conditions = new List<Expression<Func<Producto, bool>>>
+    {
+        x => x.Stock > 0
+    }; 
+
+    if(categoriaId != 0) conditions.Add(x => x.CategoriaId == categoriaId);
+    if(!string.IsNullOrEmpty(busqueda)) conditions.Add(x => x.Nombre!.Contains(busqueda) || x.Descripcion!.Contains(busqueda));
+
+    var productos = await _productoRepository.GetAllAsync(conditions: conditions.ToArray());
+
+    var productosVM = productos.Select(item => new ProductoVM
+    {
+        ProductoId = item.ProductoId,
+        Nombre = item.Nombre,
+        Descripcion = item.Descripcion,
+        Precio = item.Precio,
+        Stock = item.Stock,
+        ImagenNombre = item.ImagenNombre
+    }).ToList();
+
+    return productosVM;
+}
+```
+
+<Info>
+  The filtering system combines multiple conditions:
+  1. **Always filters** for `Stock > 0`
+  2. **Optionally filters** by category ID
+  3. **Optionally searches** in name or description using `Contains()`
+</Info>
+
+### Product Details
+
+Each product has a dedicated detail page:
+
+```csharp HomeController.cs:64
+public async Task<IActionResult> ProductoDetalle(int id)  { 
+    var producto = await _productoService.GetByIdAsync(id);
+    return View(producto);
+}
+```
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Real-Time Stock" icon="box">
+    Only products with available stock are displayed in the catalog, preventing customer frustration.
+  </Card>
+  
+  <Card title="Category Navigation" icon="folder-tree">
+    Categories provide intuitive organization, making it easy for customers to find what they need.
+  </Card>
+  
+  <Card title="Flexible Search" icon="magnifying-glass">
+    Search queries match against both product names and descriptions for comprehensive results.
+  </Card>
+  
+  <Card title="Image Support" icon="image">
+    Products can include images stored in the `/imagenes` folder with unique filenames.
+  </Card>
+</CardGroup>
+
+## View Models
+
+The catalog uses a composite view model to pass data to the view:
+
+```csharp CatalogoVM.cs
+public class CatalogoVM
+{
+    public IEnumerable <CategoriaVM> Categorias { get; set; }
+    public IEnumerable<ProductoVM> Productos { get; set; }
+    public string filterBay { get; set; }
+}
+```
+
+<Tip>
+  The `filterBay` property stores the current filter description (e.g., category name or search query) for display to users.
+</Tip>
+
+## Related Features
+
+- [Shopping Cart](/features/shopping-cart) - Add products to cart from detail pages
+- [Order Management](/features/order-management) - Complete purchases of catalog items

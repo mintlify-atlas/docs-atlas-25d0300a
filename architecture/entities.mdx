@@ -1,0 +1,363 @@
+---
+title: 'Database Entities'
+description: 'Domain models and entity relationships in MiTienda Web'
+---
+
+## Overview
+
+MiTienda Web uses **Entity Framework Core** with a code-first approach. All entities are defined as C# classes in the `Entities` folder and mapped to SQL Server tables through the `AppDbContext`.
+
+## Entity Relationship Diagram
+
+```
+┌──────────────┐
+│   Usuario    │
+│──────────────│
+│ UsuarioId PK │
+└──────┬───────┘
+       │ 1
+       │
+       │ *
+┌──────▼───────┐        ┌───────────────────┐
+│    Orden     │        │    Categoria      │
+│──────────────│        │───────────────────│
+│ OrdenId PK   │        │ CategoriaId PK    │
+│ UsuarioId FK │        └────────┬──────────┘
+└──────┬───────┘                 │ 1
+       │ 1                       │
+       │                         │ *
+       │ *              ┌────────▼──────────┐
+┌──────▼───────────────┐│    Producto      │
+│  ArticuloPedido      ││──────────────────│
+│──────────────────────││ ProductoId PK    │
+│ ArticuloPedidoId PK  ││ CategoriaId FK   │
+│ OrdenId FK           │└───────────────────┘
+│ ProductoId FK        │         △
+└──────────────────────┘         │
+            │                    │
+            └────────────────────┘
+```
+
+## Core Entities
+
+### Usuario (User)
+
+Represents application users with authentication and role information.
+
+```csharp
+public class Usuario
+{
+    public int UsuarioId { get; set; }
+    
+    [Required]
+    public string NombreCompleto { get; set; }
+    
+    [Required]
+    public string Correo { get; set; }
+    
+    [Required]
+    public string Contrasena { get; set; }
+    
+    [Required]
+    public string Rol { get; set; }
+
+    // Navigation property
+    public ICollection<Orden> Ordenes { get; set; }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Entities/Usuario.cs:5`
+</Info>
+
+**Properties**:
+- `UsuarioId`: Primary key, auto-generated
+- `NombreCompleto`: Full name of the user
+- `Correo`: Email address (used for login)
+- `Contrasena`: Password (stored as plain text - should be hashed in production)
+- `Rol`: User role (e.g., "Admin", "Cliente")
+- `Ordenes`: Collection of orders placed by this user
+
+### Categoria (Category)
+
+Organizes products into categories.
+
+```csharp
+public class Categoria
+{
+    public int CategoriaId { get; set; }
+    
+    [Required]
+    public string Nombre { get; set; }
+    
+    // Navigation property
+    public ICollection<Producto> Productos { get; set; }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Entities/Categoria.cs:5`
+</Info>
+
+**Seed Data**: The database is seeded with three categories:
+- Ropa (Clothing)
+- Electrónica (Electronics)
+- Hogar (Home)
+
+### Producto (Product)
+
+Represents items available for purchase.
+
+```csharp
+public class Producto
+{
+    public int ProductoId { get; set; }
+    public int CategoriaId { get; set; }
+    
+    [Required]
+    public string Nombre { get; set; }
+    
+    [Required]
+    public string Descripcion { get; set; }
+    
+    public decimal Precio { get; set; }
+    public int Stock { get; set; }
+    public string? ImagenNombre { get; set; } = null;
+    
+    // Navigation property
+    public Categoria? Categoria { get; set; }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Entities/Producto.cs:5`
+</Info>
+
+**Properties**:
+- `ProductoId`: Primary key
+- `CategoriaId`: Foreign key to Categoria
+- `Nombre`: Product name
+- `Descripcion`: Product description
+- `Precio`: Price (decimal with 10,2 precision)
+- `Stock`: Available quantity
+- `ImagenNombre`: Optional image filename stored in `/wwwroot/imagenes/`
+- `Categoria`: Navigation property to category
+
+### Orden (Order)
+
+Represents a customer order.
+
+```csharp
+public class Orden
+{
+    public int OrdenId { get; set; }
+    public DateTime FechaOrden { get; set; }
+    public int UsuarioId { get; set; }
+    public decimal TotalMonto { get; set; }
+
+    // Navigation properties
+    public Usuario? Usuario { get; set; }
+    public ICollection<ArticuloPedido> ArticuloPedidos { get; set; }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Entities/Orden.cs:5`
+</Info>
+
+**Properties**:
+- `OrdenId`: Primary key
+- `FechaOrden`: Order date and time
+- `UsuarioId`: Foreign key to Usuario
+- `TotalMonto`: Total order amount (decimal 10,2)
+- `Usuario`: Navigation property to user
+- `ArticuloPedidos`: Collection of order line items
+
+### ArticuloPedido (Order Item)
+
+Represents individual products within an order (many-to-many relationship).
+
+```csharp
+public class ArticuloPedido
+{
+    public int ArticuloPedidoId { get; set; }
+    public int OrdenId { get; set; }
+    public int ProductoId { get; set; }
+    public int Cantidad { get; set; }
+    public decimal Precio { get; set; }
+
+    // Navigation properties
+    public Orden? Orden { get; set; }
+    public Producto? Producto { get; set; }
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Entities/ArticuloPedido.cs:3`
+</Info>
+
+**Properties**:
+- `ArticuloPedidoId`: Primary key
+- `OrdenId`: Foreign key to Orden
+- `ProductoId`: Foreign key to Producto
+- `Cantidad`: Quantity ordered
+- `Precio`: Price at time of order (snapshot)
+- `Orden`: Navigation property to order
+- `Producto`: Navigation property to product
+
+<Note>
+The `Precio` field stores the product price at the time of purchase, allowing historical orders to maintain accurate pricing even if product prices change.
+</Note>
+
+## Entity Configuration
+
+All entity configurations are defined in `AppDbContext.OnModelCreating`:
+
+```csharp
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    base.OnModelCreating(modelBuilder);
+
+    // Categoria configuration
+    modelBuilder.Entity<Categoria>(e =>
+    {
+        e.HasKey("CategoriaId");
+        e.Property("CategoriaId").ValueGeneratedOnAdd();
+        e.HasData(
+            new Categoria { CategoriaId = 1, Nombre = "Ropa" },
+            new Categoria { CategoriaId = 2, Nombre = "Electrónica" },
+            new Categoria { CategoriaId = 3, Nombre = "Hogar" }
+        );
+    });
+    
+    // Producto configuration
+    modelBuilder.Entity<Producto>(e =>
+    {
+        e.HasKey("ProductoId");
+        e.Property("ProductoId").ValueGeneratedOnAdd();
+        e.Property("Precio").HasColumnType("decimal(10,2)");
+        e.HasOne(e => e.Categoria)
+         .WithMany(p => p.Productos)
+         .HasForeignKey(e => e.CategoriaId)
+         .OnDelete(DeleteBehavior.Restrict);
+    });
+    
+    // Orden configuration
+    modelBuilder.Entity<Orden>(e =>
+    {
+        e.HasKey("OrdenId");
+        e.Property("OrdenId").ValueGeneratedOnAdd();
+        e.Property("TotalMonto").HasColumnType("decimal(10,2)");
+        e.HasOne(e => e.Usuario)
+         .WithMany(p => p.Ordenes)
+         .HasForeignKey(e => e.UsuarioId)
+         .OnDelete(DeleteBehavior.Restrict);
+    });
+    
+    // ArticuloPedido configuration
+    modelBuilder.Entity<ArticuloPedido>(e =>
+    {
+        e.HasKey("ArticuloPedidoId");
+        e.Property("ArticuloPedidoId").ValueGeneratedOnAdd();
+        e.Property("Precio").HasColumnType("decimal(10,2)");
+        e.HasOne(e => e.Orden)
+         .WithMany(p => p.ArticuloPedidos)
+         .HasForeignKey(e => e.OrdenId)
+         .OnDelete(DeleteBehavior.Restrict);
+        e.HasOne(e => e.Producto)
+         .WithMany()
+         .HasForeignKey(e => e.ProductoId)
+         .OnDelete(DeleteBehavior.Restrict);
+    });
+}
+```
+
+<Info>
+**Location**: `/source/MiTienda_practica/Context/AppDbContext.cs:18`
+</Info>
+
+## Relationship Types
+
+<Tabs>
+  <Tab title="One-to-Many">
+    ### Usuario → Orden
+    - One user can have many orders
+    - Each order belongs to one user
+    - Foreign key: `Orden.UsuarioId`
+    
+    ### Categoria → Producto
+    - One category can have many products
+    - Each product belongs to one category
+    - Foreign key: `Producto.CategoriaId`
+    
+    ### Orden → ArticuloPedido
+    - One order can have many line items
+    - Each line item belongs to one order
+    - Foreign key: `ArticuloPedido.OrdenId`
+  </Tab>
+  
+  <Tab title="Many-to-Many">
+    ### Producto ↔ Orden (through ArticuloPedido)
+    - Products and Orders have a many-to-many relationship
+    - `ArticuloPedido` serves as the join table
+    - Includes additional data: `Cantidad`, `Precio`
+    - This allows the same product to appear in multiple orders
+    - And each order to contain multiple products
+  </Tab>
+</Tabs>
+
+## Delete Behavior
+
+All foreign key relationships use `DeleteBehavior.Restrict`:
+
+<Warning>
+Restricted delete means you **cannot delete** a parent record if child records exist. For example:
+- Cannot delete a Usuario if they have Ordenes
+- Cannot delete a Categoria if it has Productos
+- Cannot delete a Producto if it's referenced in ArticuloPedidos
+
+This prevents orphaned records and maintains referential integrity.
+</Warning>
+
+## DbContext Configuration
+
+The `AppDbContext` exposes all entities as `DbSet<T>` properties:
+
+```csharp
+public class AppDbContext : DbContext
+{
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+    {
+    }
+    
+    public DbSet<Categoria> Categorias { get; set; }
+    public DbSet<Producto> Productos { get; set; }
+    public DbSet<Usuario> Usuarios { get; set; }
+    public DbSet<Orden> Ordens { get; set; }
+    public DbSet<ArticuloPedido> ArticuloPedidos { get; set; }
+}
+```
+
+<Tip>
+The DbContext is registered with dependency injection in `Program.cs:13` using SQL Server as the database provider.
+</Tip>
+
+## Best Practices Implemented
+
+1. **Navigation Properties**: All relationships have navigation properties for easy traversal
+2. **Data Annotations**: Required fields use `[Required]` attribute
+3. **Nullable Reference Types**: Optional relationships use `?` operator
+4. **Decimal Precision**: Money fields use `decimal(10,2)` for accurate currency representation
+5. **Seed Data**: Initial categories ensure database has baseline data
+6. **Fluent API**: Complex configurations use Fluent API in `OnModelCreating`
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Repository Pattern" icon="database" href="/architecture/repositories">
+    Learn how entities are queried and persisted
+  </Card>
+  <Card title="Service Layer" icon="gears" href="/architecture/services">
+    See how services transform entities to view models
+  </Card>
+</CardGroup>

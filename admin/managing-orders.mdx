@@ -1,0 +1,469 @@
+---
+title: 'Managing Orders'
+description: 'Order management and processing in MiTienda Web'
+icon: 'shopping-cart'
+---
+
+## Overview
+
+The order management system in MiTienda Web handles the complete order lifecycle, from cart checkout to order history. Orders are linked to users and contain line items (ArticuloPedido) representing purchased products.
+
+<Info>
+  Orders are created when customers checkout from their shopping cart and are permanently stored with order details, pricing, and customer information.
+</Info>
+
+## Order Entity Structure
+
+Orders in MiTienda Web consist of three main entities:
+
+### Order (Orden)
+
+```csharp
+public class Orden
+{
+    public int OrdenId { get; set; }
+    public DateTime FechaOrden { get; set; }
+    public int UsuarioId { get; set; }
+    public decimal TotalMonto { get; set; }
+    
+    public Usuario? Usuario { get; set; }
+    public ICollection<ArticuloPedido> ArticuloPedidos { get; set; }
+}
+```
+
+### Order Line Item (ArticuloPedido)
+
+```csharp
+public class ArticuloPedido
+{
+    public int ArticuloPedidoId { get; set; }
+    public int OrdenId { get; set; }
+    public int ProductoId { get; set; }
+    public int Cantidad { get; set; }
+    public decimal Precio { get; set; }
+    
+    public Orden? Orden { get; set; }
+    public Producto? Producto { get; set; }
+}
+```
+
+<Note>
+  Order line items capture the price at the time of purchase, ensuring historical accuracy even if product prices change later.
+</Note>
+
+## Order Creation Process
+
+Orders are created from the shopping cart during checkout.
+
+### Shopping Cart to Order Flow
+
+<Steps>
+  <Step title="Customer Adds Items to Cart">
+    Customers browse products and add items to their shopping cart with quantities.
+  </Step>
+  
+  <Step title="Proceed to Checkout">
+    Customer reviews cart and initiates checkout process.
+  </Step>
+  
+  <Step title="Create Order">
+    The `OrdenService.AddAsync()` method creates an order from cart items:
+    
+    ```csharp
+    public async Task AddAsync(List<ArticuloCarritoVM> carritoVM, int usuarioId)
+    {
+        Orden orden = new Orden
+        {
+            FechaOrden = DateTime.Now,
+            UsuarioId = usuarioId,
+            TotalMonto = carritoVM.Sum(x => x.Precio * x.Quantity),
+            ArticuloPedidos = carritoVM.Select(x => new ArticuloPedido
+            {
+                ProductoId = x.ProductId,
+                Cantidad = x.Quantity,
+                Precio = x.Precio
+            }).ToList()
+        };
+        
+        await _ordenRepository.AddAsync(orden);
+    }
+    ```
+  </Step>
+  
+  <Step title="Order Confirmation">
+    Order is saved to database with:
+    - Current timestamp
+    - User ID
+    - Total amount
+    - All cart items as order line items
+  </Step>
+</Steps>
+
+### Cart Item View Model
+
+```csharp
+public class ArticuloCarritoVM
+{
+    public int ProductId { get; set; }
+    public string Nombre { get; set; }
+    public decimal Precio { get; set; }
+    public int Quantity { get; set; }
+    public string? ImagenNombre { get; set; }
+}
+```
+
+<Tip>
+  The cart view model contains all necessary information to create order line items without additional database queries.
+</Tip>
+
+## Viewing Orders
+
+### Customer Order History
+
+Customers can view their own order history through the `MisOrdenes` action:
+
+```csharp
+[Authorize]
+public class UsuarioController(OrdenService _ordenService) : Controller
+{
+    public async Task<IActionResult> MisOrdenes()
+    {
+        var usuarioId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value; 
+        var ordenesvm = await _ordenService.GetAllByUserAsync(int.Parse(usuarioId));
+        return View(ordenesvm);
+    }
+}
+```
+
+<Steps>
+  <Step title="User Navigates to Orders">
+    Authenticated user accesses "Mis Órdenes" page.
+  </Step>
+  
+  <Step title="Retrieve User ID">
+    System extracts user ID from authentication claims.
+  </Step>
+  
+  <Step title="Load Orders">
+    `GetAllByUserAsync()` retrieves all orders for the user.
+  </Step>
+  
+  <Step title="Display Order Details">
+    View shows order history with details and line items.
+  </Step>
+</Steps>
+
+### Retrieving Orders with Details
+
+The `GetAllByUserAsync()` method in `OrdenService` retrieves orders with full details:
+
+```csharp
+public async Task<List<OrdenVM>> GetAllByUserAsync(int usuarioId)
+{
+    var ordenes = await _ordenRepository.GetAllWithDetailsAsync(usuarioId);
+    
+    var ordenesVM = ordenes.Select(x => new OrdenVM
+    {
+        FechaOrden = x.FechaOrden.ToString("dd/MM/yyyy"),
+        MontoTotal = x.TotalMonto.ToString("C2"),
+        ordenArticulos = x.ArticuloPedidos.Select(x => new OrdenArticuloVM
+        {
+            NombreArticulo = x.Producto.Nombre,
+            Quantity = x.Cantidad,
+            Precio = x.Precio.ToString("C")
+        }).ToList()
+    }).ToList();
+    
+    return ordenesVM;
+}
+```
+
+<Info>
+  Orders include eager-loaded product information through the `ArticuloPedidos` navigation property, providing complete order details in a single query.
+</Info>
+
+## Order View Models
+
+### Order Summary (OrdenVM)
+
+```csharp
+public class OrdenVM
+{
+    public string FechaOrden { get; set; }
+    public string MontoTotal { get; set; }
+    public ICollection<OrdenArticuloVM> ordenArticulos { get; set; }
+}
+```
+
+### Order Line Item Display (OrdenArticuloVM)
+
+```csharp
+public class OrdenArticuloVM
+{
+    public string NombreArticulo { get; set; }
+    public int Quantity { get; set; }
+    public string Precio { get; set; }
+}
+```
+
+<Note>
+  View models format dates and prices as strings for display, using formats like "dd/MM/yyyy" for dates and "C2" for currency.
+</Note>
+
+## Order Calculation
+
+The order total is calculated during order creation:
+
+```csharp
+TotalMonto = carritoVM.Sum(x => x.Precio * x.Quantity)
+```
+
+<Steps>
+  <Step title="Calculate Line Item Totals">
+    For each cart item: `Precio * Quantity`
+  </Step>
+  
+  <Step title="Sum All Line Items">
+    Total order amount = sum of all line item totals
+  </Step>
+  
+  <Step title="Store Total">
+    Total is saved in the `TotalMonto` field of the order
+  </Step>
+</Steps>
+
+## Order Data Flow
+
+<Tabs>
+  <Tab title="Order Creation">
+    ```
+    Shopping Cart (ArticuloCarritoVM[])
+          ↓
+    OrdenService.AddAsync()
+          ↓
+    Create Orden entity
+          ↓
+    Map cart items to ArticuloPedido entities
+          ↓
+    Calculate TotalMonto
+          ↓
+    Save to database
+          ↓
+    Order complete
+    ```
+  </Tab>
+  
+  <Tab title="Order Retrieval">
+    ```
+    User requests order history
+          ↓
+    Extract user ID from claims
+          ↓
+    OrdenService.GetAllByUserAsync(usuarioId)
+          ↓
+    OrdenRepository.GetAllWithDetailsAsync()
+          ↓
+    Load Orden with ArticuloPedidos and Producto
+          ↓
+    Map to OrdenVM and OrdenArticuloVM
+          ↓
+    Format dates and prices
+          ↓
+    Return to view
+    ```
+  </Tab>
+</Tabs>
+
+## Order Security
+
+### User Isolation
+
+Orders are isolated by user ID to ensure privacy:
+
+```csharp
+var usuarioId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+var ordenesvm = await _ordenService.GetAllByUserAsync(int.Parse(usuarioId));
+```
+
+<Warning>
+  Always use the authenticated user's ID from claims, never accept user ID as a parameter to prevent unauthorized access to other users' orders.
+</Warning>
+
+### Authorization Requirements
+
+```csharp
+[Authorize]  // Requires authentication
+public class UsuarioController : Controller
+{
+    public async Task<IActionResult> MisOrdenes()
+    {
+        // Only authenticated users can access
+    }
+}
+```
+
+## Order Information Displayed
+
+### Order Summary
+
+Each order displays:
+- **Order Date**: Formatted as dd/MM/yyyy
+- **Total Amount**: Formatted as currency (e.g., $123.45)
+- **Order Items**: List of products in the order
+
+### Order Line Items
+
+For each item in an order:
+- **Product Name**: Name of the purchased product
+- **Quantity**: Number of units purchased
+- **Price**: Price per unit at time of purchase (formatted as currency)
+
+<Info>
+  Prices in order line items represent the price at the time of purchase, not the current product price. This ensures accurate historical records.
+</Info>
+
+## Repository Pattern
+
+The `OrdenRepository` likely implements a method to retrieve orders with related data:
+
+```csharp
+// Conceptual implementation
+public async Task<List<Orden>> GetAllWithDetailsAsync(int usuarioId)
+{
+    return await _context.Ordenes
+        .Include(o => o.ArticuloPedidos)
+            .ThenInclude(ap => ap.Producto)
+        .Where(o => o.UsuarioId == usuarioId)
+        .OrderByDescending(o => o.FechaOrden)
+        .ToListAsync();
+}
+```
+
+<Tip>
+  Using `.Include()` and `.ThenInclude()` ensures all related data is loaded in a single database query, improving performance.
+</Tip>
+
+## Order Workflow Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Capture Pricing" icon="dollar-sign">
+    Always store the current product price in the order line item. This preserves historical pricing even if product prices change.
+  </Card>
+  
+  <Card title="Calculate Totals" icon="calculator">
+    Calculate order totals during creation and store them. Don't recalculate from line items in views.
+  </Card>
+  
+  <Card title="Timestamp Orders" icon="clock">
+    Use `DateTime.Now` to capture the exact order creation time for accurate record-keeping.
+  </Card>
+  
+  <Card title="Eager Loading" icon="database">
+    Load related entities (products, user info) when retrieving orders to avoid N+1 query problems.
+  </Card>
+</CardGroup>
+
+## Date and Currency Formatting
+
+### Date Formatting
+
+```csharp
+FechaOrden = x.FechaOrden.ToString("dd/MM/yyyy")
+// Example output: 09/03/2026
+```
+
+### Currency Formatting
+
+```csharp
+MontoTotal = x.TotalMonto.ToString("C2")
+// Example output: $123.45
+
+Precio = x.Precio.ToString("C")
+// Example output: $19.99
+```
+
+<Note>
+  Currency formatting uses the server's culture settings by default. For international applications, consider specifying culture explicitly.
+</Note>
+
+## Integration Points
+
+### User Relationship
+
+```csharp
+public class Orden
+{
+    public int UsuarioId { get; set; }
+    public Usuario? Usuario { get; set; }
+}
+
+public class Usuario
+{
+    public ICollection<Orden> Ordenes { get; set; }
+}
+```
+
+### Product Relationship
+
+```csharp
+public class ArticuloPedido
+{
+    public int ProductoId { get; set; }
+    public Producto? Producto { get; set; }
+}
+```
+
+<Info>
+  Order line items maintain a reference to the product entity, allowing product information (name, description, etc.) to be displayed in order history.
+</Info>
+
+## Common Order Scenarios
+
+<Tabs>
+  <Tab title="Complete Purchase">
+    1. Customer adds products to cart
+    2. Customer proceeds to checkout
+    3. System validates cart contents
+    4. Order created with:
+       - Current timestamp
+       - User ID from authentication
+       - Total calculated from cart
+       - Line items from cart items
+    5. Order saved to database
+    6. Cart cleared
+    7. Confirmation displayed
+  </Tab>
+  
+  <Tab title="View Order History">
+    1. Customer navigates to "Mis Órdenes"
+    2. System authenticates user
+    3. Retrieves orders for user ID
+    4. Loads order details:
+       - Order date and total
+       - All line items with products
+    5. Formats dates and prices
+    6. Displays order list
+    7. Customer can view details of each order
+  </Tab>
+  
+  <Tab title="Order Details Display">
+    For each order shown:
+    - Order date: "09/03/2026"
+    - Total: "$245.99"
+    - Line items:
+      - Product 1: "Laptop" × 1 @ $199.99
+      - Product 2: "Mouse" × 2 @ $23.00
+  </Tab>
+</Tabs>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Managing Users" icon="users" href="/admin/managing-users">
+    Learn about user authentication and how orders are linked to users
+  </Card>
+  
+  <Card title="Managing Products" icon="box" href="/admin/managing-products">
+    Understand product management and how products appear in orders
+  </Card>
+</CardGroup>

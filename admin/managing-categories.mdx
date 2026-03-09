@@ -1,0 +1,357 @@
+---
+title: 'Managing Categories'
+description: 'Guide to category management for organizing products in MiTienda Web'
+icon: 'folder-tree'
+---
+
+## Overview
+
+Categories provide a way to organize products in MiTienda Web. Each product must be assigned to a category, making it easier for customers to browse and find items in the store.
+
+<Note>
+  Category management is restricted to administrators. The `CategoriaController` is protected with `[Authorize(Roles = "Admin")]`.
+</Note>
+
+## Category Entity Structure
+
+Categories in MiTienda Web have a simple structure:
+
+```csharp
+public class Categoria
+{
+    public int CategoriaId { get; set; }
+    [Required]
+    public string Nombre { get; set; }
+    public ICollection<Producto> Productos { get; set; }
+}
+```
+
+<Info>
+  Each category can have multiple products associated with it through the `Productos` collection.
+</Info>
+
+## Viewing Categories
+
+### Access Category List
+
+<Steps>
+  <Step title="Navigate to Categories">
+    Access the categories index page to view all categories in the system.
+    
+    **Controller Action:** `CategoriaController.Index()` (line 12)
+    
+    ```csharp
+    public async Task<IActionResult> Index()
+    {
+        var categorias = await _categoriaService.GetAllAsync();
+        return View(categorias);
+    }
+    ```
+  </Step>
+  
+  <Step title="View Category Details">
+    The category list displays:
+    - Category ID
+    - Category name
+    - Action buttons (Edit/Delete)
+  </Step>
+</Steps>
+
+### Backend Implementation
+
+The `GetAllAsync()` method in `CategoriaService` retrieves all categories:
+
+```csharp
+public async Task<IEnumerable<CategoriaVM>> GetAllAsync()
+{
+    var categories = await _categoriaRepository.GetAllAsync();
+    
+    var categoriesVM = categories.Select(item =>
+    new CategoriaVM
+    {
+        CategoriaId = item.CategoriaId,
+        Nombre = item.Nombre
+    }
+    ).ToList();
+    
+    return categoriesVM;
+}
+```
+
+## Creating a New Category
+
+<Steps>
+  <Step title="Open Create Form">
+    Navigate to the Add/Edit page with `id = 0` to create a new category.
+    
+    ```csharp
+    [HttpGet]
+    public async Task<IActionResult> AddEdit(int id)
+    {
+        if (id == 0)
+        {
+            return View(new CategoriaVM());
+        }
+        
+        var categoriaVM = await _categoriaService.GetByIdAsync(id);
+        return View(categoriaVM);
+    }
+    ```
+  </Step>
+  
+  <Step title="Enter Category Name">
+    Enter the category name in the form. This is the only required field.
+    
+    **Field Validation:**
+    - **Nombre**: Required, represents the category name
+  </Step>
+  
+  <Step title="Submit the Form">
+    Submit the form to create the category. The system will:
+    - Validate the category name is provided
+    - Create the category record
+    - Display success message: "La categoría fue creada"
+    - Clear the form for creating another category
+  </Step>
+</Steps>
+
+### Create Implementation
+
+The `AddAsync()` method in `CategoriaService` handles category creation:
+
+```csharp
+public async Task AddAsync(CategoriaVM viewModel)
+{
+    var entity = new Categoria
+    {
+        Nombre = viewModel.Nombre
+    };
+    await _categoriaRepository.AddAsync(entity);
+}
+```
+
+The controller POST action:
+
+```csharp
+[HttpPost]
+public async Task<IActionResult> AddEdit(CategoriaVM entityVM)
+{
+    ViewBag.MensajeExito = null;
+    
+    if (!ModelState.IsValid) return View(entityVM);
+    
+    if (entityVM.CategoriaId == 0)
+    {
+        await _categoriaService.AddAsync(entityVM);
+        ViewBag.MensajeExito = "La categoría fue creada";
+        ModelState.Clear();
+        entityVM = new CategoriaVM();
+    }
+    else
+    {
+        await _categoriaService.EditAsync(entityVM);
+        ViewBag.MensajeExito = "La categoría fue actualizada";
+    }
+    
+    return View(entityVM);
+}
+```
+
+<Tip>
+  After creating a category, the form is automatically cleared so you can quickly add another category without navigating away.
+</Tip>
+
+## Editing Categories
+
+<Steps>
+  <Step title="Select Category to Edit">
+    Click edit on a category from the category list to load the edit form.
+  </Step>
+  
+  <Step title="Load Existing Data">
+    The `GetByIdAsync()` method retrieves the category details:
+    
+    ```csharp
+    public async Task<CategoriaVM?> GetByIdAsync(int id)
+    {
+        var categoria = await _categoriaRepository.GetByIdAsync(id);
+        var categoriaVM = new CategoriaVM();
+        
+        if (categoria != null)
+        {
+            categoriaVM.Nombre = categoria.Nombre;
+            categoriaVM.CategoriaId = categoria.CategoriaId;
+        }
+        return categoriaVM;
+    }
+    ```
+  </Step>
+  
+  <Step title="Update Category Name">
+    Modify the category name and submit the form.
+  </Step>
+  
+  <Step title="Save Changes">
+    The system will:
+    - Validate the updated data
+    - Update the category record
+    - Display success message: "La categoría fue actualizada"
+  </Step>
+</Steps>
+
+### Edit Implementation
+
+The `EditAsync()` method handles category updates:
+
+```csharp
+public async Task EditAsync(CategoriaVM viewModel)
+{
+    var entity = new Categoria
+    {
+        CategoriaId = viewModel.CategoriaId,
+        Nombre = viewModel.Nombre
+    };
+    await _categoriaRepository.EditAsync(entity);
+}
+```
+
+## Deleting Categories
+
+<Warning>
+  Deleting a category may affect associated products. Ensure products are reassigned to other categories or deleted before removing a category.
+</Warning>
+
+<Steps>
+  <Step title="Select Category to Delete">
+    Click the delete button on the category you want to remove from the category list.
+  </Step>
+  
+  <Step title="Process Deletion">
+    The delete action is handled by the `Delete()` method:
+    
+    ```csharp
+    public async Task<IActionResult> Delete(int id)
+    {
+        await _categoriaService.DeleteAsync(id);
+        return RedirectToAction("Index");
+    }
+    ```
+  </Step>
+  
+  <Step title="Category Removed">
+    The category is deleted from the database and you're redirected to the category list.
+  </Step>
+</Steps>
+
+### Delete Implementation
+
+```csharp
+public async Task DeleteAsync(int id)
+{
+    var cartegoria = await _categoriaRepository.GetByIdAsync(id);
+    await _categoriaRepository.DeleteAsync(cartegoria);
+}
+```
+
+## Category View Model
+
+The `CategoriaVM` view model is used for data transfer between the controller and views:
+
+```csharp
+public class CategoriaVM
+{
+    public int CategoriaId { get; set; }
+    
+    [Required]
+    public string Nombre { get; set; }
+}
+```
+
+<Info>
+  The view model includes validation attributes to ensure data integrity at the presentation layer.
+</Info>
+
+## Category Usage in Product Management
+
+Categories are tightly integrated with product management. When managing products:
+
+### Loading Categories for Product Assignment
+
+```csharp
+public async Task<List<CategoriaVM>> GetCategoriasAsync()
+{
+    var categorias = await _categoriaRepository.GetAllAsync();
+    
+    return categorias.Select(item => new CategoriaVM
+    {
+        CategoriaId = item.CategoriaId,
+        Nombre = item.Nombre
+    }).ToList();
+}
+```
+
+This method is used in `ProductoController` to populate the category dropdown:
+
+```csharp
+model.Categorias = categorias.Select(x => new SelectListItem
+{
+    Value = x.CategoriaId.ToString(),
+    Text = x.Nombre
+}).ToList();
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Descriptive Names" icon="tag">
+    Use clear, descriptive names for categories that customers will easily understand (e.g., "Electronics", "Clothing", "Home & Garden").
+  </Card>
+  
+  <Card title="Logical Organization" icon="sitemap">
+    Organize categories in a way that makes sense for your product catalog and customer browsing patterns.
+  </Card>
+  
+  <Card title="Check Dependencies" icon="link">
+    Before deleting a category, verify that no products are currently assigned to it or reassign them first.
+  </Card>
+  
+  <Card title="Consistent Naming" icon="spell-check">
+    Maintain consistent naming conventions across all categories for a professional appearance.
+  </Card>
+</CardGroup>
+
+## Common Workflows
+
+<Tabs>
+  <Tab title="Create Category">
+    1. Navigate to Categories section
+    2. Click "Add New" or access AddEdit with id=0
+    3. Enter category name
+    4. Submit form
+    5. Success message appears
+    6. Category appears in list
+  </Tab>
+  
+  <Tab title="Update Category">
+    1. Navigate to Categories section
+    2. Click "Edit" on desired category
+    3. Modify category name
+    4. Submit form
+    5. Success message appears
+    6. Return to category list
+  </Tab>
+  
+  <Tab title="Delete Category">
+    1. Navigate to Categories section
+    2. Click "Delete" on desired category
+    3. Confirm deletion (if prompted)
+    4. Category removed from database
+    5. Redirected to category list
+  </Tab>
+</Tabs>
+
+## Related Resources
+
+<Card title="Managing Products" icon="box" href="/admin/managing-products">
+  Learn how categories are used when creating and organizing products
+</Card>

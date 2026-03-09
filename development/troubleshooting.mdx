@@ -1,0 +1,707 @@
+---
+title: 'Troubleshooting'
+description: 'Common issues and solutions for MiTienda Web deployment and runtime'
+icon: 'screwdriver-wrench'
+---
+
+## Overview
+
+This guide provides solutions to common issues encountered when deploying and running MiTienda Web in production environments.
+
+<Tip>
+  Before troubleshooting, enable detailed error messages temporarily by setting:
+  ```json
+  "Logging": { "LogLevel": { "Default": "Debug" } }
+  ```
+</Tip>
+
+## Database Issues
+
+### Connection String Errors
+
+<Accordion title="Error: Cannot open database 'DBTiendaWeb'">
+  **Symptoms:**
+  ```
+  Microsoft.Data.SqlClient.SqlException: Cannot open database "DBTiendaWeb" requested by the login.
+  The login failed.
+  ```
+  
+  **Causes:**
+  - Database doesn't exist
+  - Incorrect connection string
+  - SQL Server authentication issues
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Verify Database Exists">
+      ```sql
+      -- Connect to SQL Server and check
+      SELECT name FROM sys.databases WHERE name = 'DBTiendaWeb';
+      ```
+    </Step>
+    
+    <Step title="Create Database if Missing">
+      ```sql
+      CREATE DATABASE DBTiendaWeb;
+      ```
+    </Step>
+    
+    <Step title="Run Migrations">
+      ```bash
+      dotnet ef database update
+      ```
+      
+      This will create all tables defined in `AppDbContext.cs:12-16` including:
+      - Categorias (with seed data)
+      - Productos
+      - Usuarios
+      - Ordens
+      - ArticuloPedidos
+    </Step>
+    
+    <Step title="Verify Connection String Format">
+      ```json appsettings.json
+      {
+        "ConnectionStrings": {
+          "CadenaSql": "Data Source=SERVER;Database=DBTiendaWeb;User ID=USERNAME;Password=PASSWORD;TrustServerCertificate=True;"
+        }
+      }
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="Error: Login failed for user">
+  **Symptoms:**
+  ```
+  Login failed for user 'sa' or 'NT AUTHORITY\ANONYMOUS LOGON'
+  ```
+  
+  **Solutions:**
+  
+  <CodeGroup>
+    ```sql SQL Authentication
+    -- Enable SQL Server authentication
+    USE master;
+    GO
+    
+    ALTER LOGIN sa ENABLE;
+    ALTER LOGIN sa WITH PASSWORD = 'YourStrongPassword';
+    GO
+    
+    -- Or create new login
+    CREATE LOGIN mitienda_user WITH PASSWORD = 'YourStrongPassword';
+    CREATE USER mitienda_user FOR LOGIN mitienda_user;
+    ALTER ROLE db_owner ADD MEMBER mitienda_user;
+    ```
+    
+    ```sql Windows Authentication
+    -- Create user for IIS application pool identity
+    CREATE LOGIN [IIS APPPOOL\MiTiendaWebPool] FROM WINDOWS;
+    CREATE USER [IIS APPPOOL\MiTiendaWebPool] FOR LOGIN [IIS APPPOOL\MiTiendaWebPool];
+    ALTER ROLE db_owner ADD MEMBER [IIS APPPOOL\MiTiendaWebPool];
+    ```
+  </CodeGroup>
+  
+  <Info>
+    For Windows Authentication, update connection string:
+    ```
+    Data Source=SERVER;Database=DBTiendaWeb;Integrated Security=True;
+    ```
+  </Info>
+</Accordion>
+
+<Accordion title="Error: A network-related or instance-specific error">
+  **Symptoms:**
+  ```
+  A network-related or instance-specific error occurred while establishing a connection to SQL Server.
+  The server was not found or was not accessible.
+  ```
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Verify SQL Server is Running">
+      ```bash
+      # Windows
+      Get-Service MSSQLSERVER
+      
+      # Linux
+      systemctl status mssql-server
+      ```
+    </Step>
+    
+    <Step title="Check Network Connectivity">
+      ```bash
+      # Test connection to SQL Server
+      telnet your-server 1433
+      
+      # Or use Test-NetConnection (PowerShell)
+      Test-NetConnection -ComputerName your-server -Port 1433
+      ```
+    </Step>
+    
+    <Step title="Enable TCP/IP Protocol">
+      ```powershell
+      # Using SQL Server Configuration Manager
+      # Enable TCP/IP in SQL Server Network Configuration
+      # Restart SQL Server service after enabling
+      ```
+    </Step>
+    
+    <Step title="Configure Firewall">
+      ```bash
+      # Windows Firewall
+      New-NetFirewallRule -DisplayName "SQL Server" -Direction Inbound -Protocol TCP -LocalPort 1433 -Action Allow
+      
+      # Linux (ufw)
+      sudo ufw allow 1433/tcp
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+### Migration Issues
+
+<Accordion title="Error: There is already an object named 'X' in the database">
+  **Symptoms:**
+  - Migration fails with duplicate object errors
+  - Tables already exist from manual creation
+  
+  **Solution:**
+  
+  ```bash
+  # Option 1: Reset migrations
+  dotnet ef database drop
+  dotnet ef database update
+  
+  # Option 2: Generate SQL script and modify
+  dotnet ef migrations script -o migration.sql
+  # Edit migration.sql to remove problematic CREATE statements
+  # Execute manually in SQL Server Management Studio
+  ```
+</Accordion>
+
+<Accordion title="Error: Pending model changes">
+  **Symptoms:**
+  ```
+  The model backing the context has changed since the database was created.
+  ```
+  
+  **Solution:**
+  
+  ```bash
+  # Create and apply new migration
+  dotnet ef migrations add UpdateModel
+  dotnet ef database update
+  ```
+</Accordion>
+
+## IIS Deployment Issues
+
+<Accordion title="HTTP Error 500.19 - Internal Server Error">
+  **Symptoms:**
+  - Error code: 0x8007000d
+  - Configuration error
+  
+  **Causes:**
+  - Missing ASP.NET Core Hosting Bundle
+  - Corrupted web.config
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Install Hosting Bundle">
+      Download and install .NET 9 Hosting Bundle from Microsoft, then restart IIS:
+      
+      ```powershell
+      net stop was /y
+      net start w3svc
+      ```
+    </Step>
+    
+    <Step title="Verify AspNetCoreModuleV2">
+      ```powershell
+      Get-WebGlobalModule | Where-Object {$_.Name -like "*AspNetCore*"}
+      ```
+    </Step>
+    
+    <Step title="Check Application Pool">
+      Ensure "No Managed Code" is selected for .NET CLR Version:
+      
+      ```powershell
+      Get-ItemProperty IIS:\AppPools\MiTiendaWebPool -Name managedRuntimeVersion
+      # Should return empty string
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="HTTP Error 500.30 - ANCM In-Process Start Failure">
+  **Symptoms:**
+  - Application fails to start
+  - Event Viewer shows .NET runtime errors
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Check Event Viewer Logs">
+      ```powershell
+      # Check Application logs for detailed error
+      Get-EventLog -LogName Application -Source "IIS AspNetCore Module V2" -Newest 10
+      ```
+    </Step>
+    
+    <Step title="Enable Detailed Errors">
+      Add to web.config in deployment folder:
+      
+      ```xml web.config
+      <aspNetCore processPath="dotnet" 
+                  arguments=".\MiTienda_practica.dll" 
+                  stdoutLogEnabled="true" 
+                  stdoutLogFile=".\logs\stdout" 
+                  hostingModel="inprocess">
+      </aspNetCore>
+      ```
+      
+      Create `logs` folder with write permissions.
+    </Step>
+    
+    <Step title="Verify .NET Runtime">
+      ```bash
+      dotnet --list-runtimes
+      # Should show Microsoft.AspNetCore.App 9.0.x
+      ```
+    </Step>
+    
+    <Step title="Check Connection String">
+      Verify the database connection string is correct in `appsettings.json`.
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="403.14 - Forbidden (Directory browsing denied)">
+  **Symptoms:**
+  - "The Web server is configured to not list the contents of this directory."
+  
+  **Solution:**
+  
+  Verify the application pool is running and the web.config contains the ASP.NET Core module configuration:
+  
+  ```xml web.config
+  <?xml version="1.0" encoding="utf-8"?>
+  <configuration>
+    <system.webServer>
+      <handlers>
+        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />
+      </handlers>
+      <aspNetCore processPath="dotnet" 
+                  arguments=".\MiTienda_practica.dll" 
+                  stdoutLogEnabled="false" 
+                  hostingModel="inprocess" />
+    </system.webServer>
+  </configuration>
+  ```
+</Accordion>
+
+## Session and Authentication Issues
+
+<Accordion title="Session data is lost between requests">
+  **Symptoms:**
+  - Shopping cart (`HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito")`) loses items
+  - Users logged out unexpectedly
+  
+  **Causes:**
+  - Application pool recycling
+  - Session state not persisted
+  - Multiple server instances without session sharing
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Use Distributed Session State">
+      Replace in-memory session with SQL Server or Redis:
+      
+      ```csharp Program.cs
+      // Replace AddDistributedMemoryCache with:
+      builder.Services.AddDistributedSqlServerCache(options =>
+      {
+          options.ConnectionString = builder.Configuration.GetConnectionString("CadenaSql");
+          options.SchemaName = "dbo";
+          options.TableName = "SessionData";
+      });
+      ```
+      
+      Then create the session table:
+      ```bash
+      dotnet sql-cache create "ConnectionString" dbo SessionData
+      ```
+    </Step>
+    
+    <Step title="Disable Application Pool Recycling">
+      ```powershell
+      Set-ItemProperty IIS:\AppPools\MiTiendaWebPool -Name Recycling.PeriodicRestart.Time -Value 0
+      ```
+    </Step>
+    
+    <Step title="Configure Session Timeout">
+      The application already sets 30-minute timeout in `Program.cs:29`. Verify cookie settings:
+      
+      ```csharp Program.cs
+      builder.Services.AddSession(options =>
+      {
+          options.IdleTimeout = TimeSpan.FromMinutes(30);
+          options.Cookie.HttpOnly = true;
+          options.Cookie.IsEssential = true;
+          options.Cookie.SecurePolicy = CookieSecurePolicy.Always; // For HTTPS
+          options.Cookie.SameSite = SameSiteMode.Lax;
+      });
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="Users can't login - redirected back to login page">
+  **Symptoms:**
+  - Login appears successful but redirects to login again
+  - No error messages displayed
+  
+  **Causes:**
+  - Cookie authentication not configured properly
+  - Session middleware order incorrect
+  - HTTPS/secure cookie issues
+  
+  **Solution:**
+  
+  Verify middleware order in `Program.cs:51-55`. Correct order is:
+  
+  ```csharp Program.cs
+  app.UseRouting();
+  app.UseSession();          // Must be before UseAuthorization
+  app.UseAuthentication();   // Add this if missing
+  app.UseAuthorization();
+  ```
+  
+  <Warning>
+    The current `Program.cs` is missing `app.UseAuthentication()`. Add it before `app.UseAuthorization()`.
+  </Warning>
+</Accordion>
+
+## File Upload Issues
+
+<Accordion title="Product images fail to upload">
+  **Symptoms:**
+  - File upload returns errors
+  - Images not displayed after upload
+  
+  **Causes:**
+  - Insufficient permissions on `wwwroot/imagenes` folder
+  - Path doesn't exist
+  - File size limits exceeded
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Verify Directory Exists">
+      The project includes a folder definition in `.csproj:19`, but ensure it exists:
+      
+      ```bash
+      # Create if missing
+      mkdir -p wwwroot/imagenes
+      ```
+    </Step>
+    
+    <Step title="Grant Write Permissions">
+      ```powershell
+      # Windows - Grant IIS AppPool write access
+      $acl = Get-Acl "C:\inetpub\MiTiendaWeb\wwwroot\imagenes"
+      $permission = "IIS AppPool\MiTiendaWebPool","FullControl","ContainerInherit,ObjectInherit","None","Allow"
+      $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
+      $acl.SetAccessRule($accessRule)
+      Set-Acl "C:\inetpub\MiTiendaWeb\wwwroot\imagenes" $acl
+      ```
+      
+      ```bash
+      # Linux
+      sudo chown -R www-data:www-data /var/www/mitiendaweb/wwwroot/imagenes
+      sudo chmod -R 755 /var/www/mitiendaweb/wwwroot/imagenes
+      ```
+    </Step>
+    
+    <Step title="Increase Upload Limits">
+      ```csharp Program.cs
+      builder.Services.Configure<FormOptions>(options =>
+      {
+          options.MultipartBodyLengthLimit = 52428800; // 50 MB
+      });
+      ```
+      
+      For IIS, add to web.config:
+      ```xml web.config
+      <system.webServer>
+        <security>
+          <requestFiltering>
+            <requestLimits maxAllowedContentLength="52428800" />
+          </requestFiltering>
+        </security>
+      </system.webServer>
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+## Performance Issues
+
+<Accordion title="Slow database queries">
+  **Symptoms:**
+  - Pages take long to load
+  - Database timeouts
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Enable Query Logging">
+      ```json appsettings.Development.json
+      {
+        "Logging": {
+          "LogLevel": {
+            "Microsoft.EntityFrameworkCore.Database.Command": "Information"
+          }
+        }
+      }
+      ```
+    </Step>
+    
+    <Step title="Check for N+1 Query Issues">
+      Review entity loading in services. Use `.Include()` for related entities:
+      
+      ```csharp
+      // Bad - causes N+1 queries
+      var productos = await _context.Productos.ToListAsync();
+      // Each producto.Categoria causes a separate query
+      
+      // Good - eager loading
+      var productos = await _context.Productos
+          .Include(p => p.Categoria)
+          .ToListAsync();
+      ```
+    </Step>
+    
+    <Step title="Add Database Indexes">
+      Create migration with indexes:
+      
+      ```csharp
+      modelBuilder.Entity<Producto>(e =>
+      {
+          e.HasIndex(p => p.CategoriaId);
+          e.HasIndex(p => p.Nombre);
+      });
+      ```
+    </Step>
+    
+    <Step title="Enable Query Result Caching">
+      ```csharp
+      var categorias = await _context.Categorias
+          .AsNoTracking()  // For read-only queries
+          .ToListAsync();
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="High memory usage">
+  **Symptoms:**
+  - Application consumes excessive memory
+  - OutOfMemoryException errors
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Check for Memory Leaks">
+      Review session storage usage. Large objects in session (`List<ArticuloCarritoVM>`) can accumulate.
+    </Step>
+    
+    <Step title="Configure Garbage Collection">
+      ```xml MiTienda_practica.csproj
+      <PropertyGroup>
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+        <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+      </PropertyGroup>
+      ```
+    </Step>
+    
+    <Step title="Limit Session Size">
+      Implement session size limits:
+      
+      ```csharp
+      var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito");
+      if (carrito != null && carrito.Count > 100)
+      {
+          // Limit cart size
+          ModelState.AddModelError("", "Carrito lleno. Máximo 100 artículos.");
+          return View();
+      }
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+## Docker Issues
+
+<Accordion title="Container fails to start">
+  **Symptoms:**
+  ```
+  docker-compose up fails or container exits immediately
+  ```
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Check Container Logs">
+      ```bash
+      docker-compose logs web
+      docker-compose logs sqlserver
+      ```
+    </Step>
+    
+    <Step title="Verify SQL Server Container">
+      Ensure SQL Server accepts SA password requirements:
+      
+      ```yaml docker-compose.yml
+      environment:
+        - SA_PASSWORD=YourStrong@Password123  # Must be complex
+      ```
+    </Step>
+    
+    <Step title="Check Connection String">
+      Use service name as server in connection string:
+      
+      ```
+      Data Source=sqlserver;Database=DBTiendaWeb;...
+      ```
+      (not `localhost` or `127.0.0.1`)
+    </Step>
+    
+    <Step title="Wait for SQL Server">
+      Add health check or startup delay:
+      
+      ```yaml docker-compose.yml
+      web:
+        depends_on:
+          sqlserver:
+            condition: service_healthy
+      
+      sqlserver:
+        healthcheck:
+          test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "$$SA_PASSWORD" -Q "SELECT 1"
+          interval: 10s
+          timeout: 3s
+          retries: 10
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+## Linux Deployment Issues
+
+<Accordion title="Service fails to start on Linux">
+  **Symptoms:**
+  ```
+  systemctl status shows failed state
+  ```
+  
+  **Solutions:**
+  
+  <Steps>
+    <Step title="Check Service Logs">
+      ```bash
+      sudo journalctl -u mitiendaweb -n 50 --no-pager
+      ```
+    </Step>
+    
+    <Step title="Verify File Permissions">
+      ```bash
+      sudo chown -R www-data:www-data /var/www/mitiendaweb
+      sudo chmod +x /var/www/mitiendaweb/MiTienda_practica.dll
+      ```
+    </Step>
+    
+    <Step title="Check .NET Runtime">
+      ```bash
+      dotnet --list-runtimes
+      # Should show: Microsoft.AspNetCore.App 9.0.x
+      ```
+    </Step>
+    
+    <Step title="Test Manual Start">
+      ```bash
+      cd /var/www/mitiendaweb
+      sudo -u www-data dotnet MiTienda_practica.dll
+      # Check for errors
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="Enable Debug Logging" icon="bug">
+    ```json appsettings.json
+    {
+      "Logging": {
+        "LogLevel": {
+          "Default": "Debug",
+          "Microsoft": "Debug"
+        }
+      }
+    }
+    ```
+  </Card>
+  
+  <Card title="Collect Diagnostic Info" icon="stethoscope">
+    ```bash
+    # Application info
+    dotnet --info
+    
+    # Check app dependencies
+    dotnet restore --verify-only
+    
+    # Test database connection
+    dotnet ef dbcontext info
+    ```
+  </Card>
+</CardGroup>
+
+<Info>
+  When reporting issues, include:
+  - Operating system and version
+  - .NET runtime version
+  - SQL Server version
+  - Complete error messages from logs
+  - Steps to reproduce
+</Info>
+
+## Common Error Codes Reference
+
+| Error Code | Description | Common Cause |
+|------------|-------------|-------------|
+| 500.19 | Internal Server Error | Missing Hosting Bundle |
+| 500.30 | ANCM In-Process Start Failure | Runtime error, check logs |
+| 500.31 | ANCM Failed to Find Native Dependencies | Wrong .NET version |
+| 500.32 | ANCM Failed to Load dll | Missing dependencies |
+| 500.33 | ANCM Request Handler Load Failure | Corrupted installation |
+| 502.5 | Process Failure | Application crash on startup |
+| 403.14 | Forbidden | Missing web.config or handler |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment Guide" icon="rocket" href="/development/deployment">
+    Return to deployment documentation
+  </Card>
+  <Card title="Configuration" icon="gear" href="/development/configuration">
+    Learn about configuration options
+  </Card>
+</CardGroup>

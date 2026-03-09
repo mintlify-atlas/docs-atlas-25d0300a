@@ -1,0 +1,394 @@
+---
+title: 'Order Management'
+description: 'Process customer orders from checkout through completion with order history'
+icon: 'receipt'
+---
+
+The order management system handles the complete order lifecycle from cart checkout to order completion, including order creation, item tracking, and order history.
+
+## Overview
+
+Order management provides:
+- **Seamless checkout** from shopping cart to completed order
+- **Order persistence** in the database with full details
+- **Line item tracking** for each product in an order
+- **Order history** for users to view past purchases
+- **Automatic total calculation** based on cart contents
+
+## User Experience Flow
+
+<Steps>
+  <Step title="Review Cart">
+    User reviews their shopping cart with all items and quantities.
+    
+    Cart shows individual prices and total amount before checkout.
+  </Step>
+  
+  <Step title="Initiate Checkout">
+    Click "Pay Now" button to begin the checkout process.
+    
+    User must be authenticated to proceed (redirected to login if not).
+  </Step>
+  
+  <Step title="Order Creation">
+    System creates an order record with:
+    - Order date/time
+    - User association
+    - Total order amount
+    - All cart items as order line items
+  </Step>
+  
+  <Step title="Confirmation">
+    User sees a success page confirming their order.
+    
+    Cart is cleared automatically after successful order.
+  </Step>
+  
+  <Step title="View Order History">
+    Users can view all past orders with complete details.
+    
+    Each order shows date, total, and all purchased items.
+  </Step>
+</Steps>
+
+## Technical Implementation
+
+### Data Models
+
+Orders use two related entities:
+
+<CodeGroup>
+```csharp Orden.cs
+using System.Collections.ObjectModel;
+
+namespace MiTienda_practica.Entities
+{
+    public class Orden
+    {
+        public int OrdenId { get; set; }
+        public DateTime FechaOrden { get; set; }
+        public int UsuarioId { get; set; }
+        public decimal TotalMonto { get; set; }
+
+        public Usuario? Usuario { get; set; }
+        public ICollection<ArticuloPedido> ArticuloPedidos { get; set; }
+    }
+}
+```
+
+```csharp ArticuloPedido.cs
+namespace MiTienda_practica.Entities
+{
+    public class ArticuloPedido
+    {
+        public int ArticuloPedidoId { get; set; }
+        public int OrdenId { get; set; }
+        public int ProductoId { get; set; }
+        public int Cantidad { get; set; }
+        public decimal Precio { get; set; }
+
+
+        public Orden? Orden { get; set; }
+        public Producto? Producto { get; set; }
+    }
+}
+```
+</CodeGroup>
+
+<Info>
+  **Entity Relationships**:
+  - One `Orden` belongs to one `Usuario`
+  - One `Orden` has many `ArticuloPedido` (line items)
+  - Each `ArticuloPedido` references one `Producto`
+  
+  This creates a classic order header/detail relationship pattern.
+</Info>
+
+### Checkout Process
+
+The checkout flow converts the session cart into a persistent order:
+
+```csharp HomeController.cs:116
+[HttpPost]
+public async Task<IActionResult> PagarAhora()
+{ 
+    var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito");
+
+    var userId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+    await _ordenService.AddAsync(carrito,int.Parse(userId));
+
+    HttpContext.Session.Remove("Carrito");
+
+    return View("PagoExitoso");
+}
+```
+
+<Note>
+  The cart is immediately cleared from session after successful order creation, ensuring users start fresh for their next purchase.
+</Note>
+
+### Order Creation Service
+
+The `OrdenService` handles the complex logic of converting cart items to order entities:
+
+```csharp OrdenService.cs:11
+public async Task AddAsync(List<ArticuloCarritoVM> carritoVM, int usuarioId)
+{
+    Orden orden = new Orden
+    {
+        FechaOrden = DateTime.Now,
+        UsuarioId = usuarioId,
+        TotalMonto = carritoVM.Sum(x => x.Precio * x.Quantity),
+        ArticuloPedidos = carritoVM.Select(x => new ArticuloPedido
+        {
+            ProductoId = x.ProductId,
+            Cantidad = x.Quantity,
+            Precio = x.Precio
+        }).ToList()
+    };
+
+    await _ordenRepository.AddAsync(orden);
+}
+```
+
+<Tabs>
+  <Tab title="Order Header">
+    The `Orden` entity captures:
+    - **FechaOrden**: Current timestamp when order is placed
+    - **UsuarioId**: Links order to the authenticated user
+    - **TotalMonto**: Calculated sum of all line items (price × quantity)
+  </Tab>
+  
+  <Tab title="Order Lines">
+    Each cart item becomes an `ArticuloPedido`:
+    - **ProductoId**: Links to the product
+    - **Cantidad**: Quantity ordered
+    - **Precio**: Price at time of order (snapshot for historical accuracy)
+  </Tab>
+  
+  <Tab title="Calculation">
+    The LINQ expression calculates the total:
+    ```csharp
+    TotalMonto = carritoVM.Sum(x => x.Precio * x.Quantity)
+    ```
+    
+    This automatically handles any number of cart items with any quantities.
+  </Tab>
+</Tabs>
+
+### Order History
+
+Users can retrieve their complete order history:
+
+```csharp OrdenService.cs:29
+public async Task<List<OrdenVM>> GetAllByUserAsync(int usuarioId)
+{
+    var ordenes = await _ordenRepository.GetAllWithDetailsAsync(usuarioId);
+    
+    var ordenesVM = ordenes.Select(x => new OrdenVM
+    {
+        FechaOrden = x.FechaOrden.ToString("dd/MM/yyyy"),
+        MontoTotal = x.TotalMonto.ToString("C2"),
+        ordenArticulos = x.ArticuloPedidos.Select(x => new OrdenArticuloVM
+        {
+            NombreArticulo = x.Producto.Nombre,
+            Quantity = x.Cantidad,
+            Precio = x.Precio.ToString("C")
+        }).ToList()
+    }).ToList();
+
+    return ordenesVM;
+}
+```
+
+<Info>
+  **Formatted Output**:
+  - Dates formatted as `dd/MM/yyyy` (e.g., "15/03/2026")
+  - Currency formatted with `ToString("C2")` for totals and `ToString("C")` for items
+  - Product names retrieved via navigation properties
+</Info>
+
+## Success Confirmation
+
+After successful order creation, users see a confirmation view:
+
+```csharp HomeController.cs:130
+public IActionResult PagoExitoso()
+{
+    return View();
+}
+```
+
+This simple action renders the success page, typically displaying:
+- Order confirmation message
+- Order number (if implemented)
+- Link to order history
+- Link to continue shopping
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Atomic Creation" icon="bolt">
+    Cart-to-order conversion happens in a single transaction, ensuring data consistency.
+  </Card>
+  
+  <Card title="Price Snapshots" icon="camera">
+    Order line items capture prices at purchase time, preserving historical accuracy.
+  </Card>
+  
+  <Card title="Automatic Totals" icon="calculator">
+    Order totals calculated automatically using LINQ, reducing calculation errors.
+  </Card>
+  
+  <Card title="Full History" icon="clock-rotate-left">
+    Complete order history with all details available for user review.
+  </Card>
+</CardGroup>
+
+## Order View Models
+
+Order data is presented to users via view models:
+
+<CodeGroup>
+```csharp OrdenVM.cs
+public class OrdenVM
+{
+    public string FechaOrden { get; set; }
+    public string MontoTotal { get; set; }
+    public List<OrdenArticuloVM> ordenArticulos { get; set; }
+}
+```
+
+```csharp OrdenArticuloVM.cs
+public class OrdenArticuloVM
+{
+    public string NombreArticulo { get; set; }
+    public int Quantity { get; set; }
+    public string Precio { get; set; }
+}
+```
+</CodeGroup>
+
+<Note>
+  View models use `string` for dates and currency to provide pre-formatted values to views, simplifying display logic.
+</Note>
+
+## Database Considerations
+
+### Entity Framework Relationships
+
+The order system relies on proper EF Core navigation properties:
+
+```csharp
+// In DbContext configuration
+modelBuilder.Entity<Orden>()
+    .HasMany(o => o.ArticuloPedidos)
+    .WithOne(a => a.Orden)
+    .HasForeignKey(a => a.OrdenId);
+
+modelBuilder.Entity<Orden>()
+    .HasOne(o => o.Usuario)
+    .WithMany(u => u.Ordenes)
+    .HasForeignKey(o => o.UsuarioId);
+```
+
+### Eager Loading
+
+When retrieving order history, the repository should eagerly load related data:
+
+```csharp
+public async Task<IEnumerable<Orden>> GetAllWithDetailsAsync(int usuarioId)
+{
+    return await _context.Ordenes
+        .Include(o => o.ArticuloPedidos)
+            .ThenInclude(a => a.Producto)
+        .Where(o => o.UsuarioId == usuarioId)
+        .OrderByDescending(o => o.FechaOrden)
+        .ToListAsync();
+}
+```
+
+<Tip>
+  Using `Include` and `ThenInclude` prevents N+1 query problems and ensures all order data is loaded efficiently in a single query.
+</Tip>
+
+## Data Integrity
+
+### Why Store Price in Order Lines?
+
+The `ArticuloPedido` entity includes a `Precio` field that duplicates the product price. This is intentional:
+
+<CardGroup cols={2}>
+  <Card title="Historical Accuracy" icon="file-check">
+    Product prices may change over time. Storing the price at purchase time ensures order history remains accurate.
+  </Card>
+  
+  <Card title="Reporting Integrity" icon="chart-line">
+    Financial reports and order totals remain consistent even if current product prices differ.
+  </Card>
+</CardGroup>
+
+<Warning>
+  **Important**: If you only stored `ProductoId`, recalculating order totals later would use current prices, not the prices customers actually paid.
+</Warning>
+
+## Best Practices
+
+1. **Transaction Handling**: Wrap order creation in a database transaction to ensure atomicity
+2. **Stock Deduction**: Consider deducting product stock when orders are placed
+3. **Order Status**: Add an order status field (Pending, Completed, Shipped, Cancelled)
+4. **Email Confirmation**: Send order confirmation emails to customers
+5. **Order Numbers**: Generate human-readable order numbers for customer reference
+6. **Inventory Validation**: Verify stock availability before creating orders
+
+## Production Enhancements
+
+<Steps>
+  <Step title="Add Order Status">
+    ```csharp
+    public enum OrderStatus { Pending, Processing, Shipped, Delivered, Cancelled }
+    public OrderStatus Status { get; set; }
+    ```
+  </Step>
+  
+  <Step title="Implement Stock Deduction">
+    Automatically reduce product stock when orders are placed to prevent overselling.
+  </Step>
+  
+  <Step title="Order Notifications">
+    Send email confirmations and status updates to customers.
+  </Step>
+  
+  <Step title="Admin Order Management">
+    Create admin interfaces to view all orders, update statuses, and generate reports.
+  </Step>
+</Steps>
+
+## Integration Points
+
+### From Shopping Cart
+
+Orders are created directly from the shopping cart:
+
+```csharp
+var carrito = HttpContext.Session.Get<List<ArticuloCarritoVM>>("Carrito");
+await _ordenService.AddAsync(carrito, int.Parse(userId));
+```
+
+### With Authentication
+
+Orders require an authenticated user:
+
+```csharp
+var userId = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier)!.Value;
+```
+
+<Tip>
+  Consider adding `[Authorize]` attribute to the checkout action to automatically enforce authentication requirements.
+</Tip>
+
+## Related Features
+
+- [Shopping Cart](/features/shopping-cart) - Orders are created from cart contents
+- [Authentication](/features/authentication) - Users must be logged in to place orders
+- [Product Catalog](/features/product-catalog) - Products in orders link back to catalog
